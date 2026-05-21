@@ -16,7 +16,18 @@ let package = Package(
             dependencies: [
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
-            path: "Sources/mcp-scanner-helper"
+            path: "Sources/mcp-scanner-helper",
+            linkerSettings: [
+                // Embed Info.plist into the binary's __TEXT,__info_plist section.
+                // macOS reads this for Bonjour service declarations and the
+                // NSLocalNetworkUsageDescription required by Sonoma+ TCC.
+                .unsafeFlags([
+                    "-Xlinker", "-sectcreate",
+                    "-Xlinker", "__TEXT",
+                    "-Xlinker", "__info_plist",
+                    "-Xlinker", "Resources/Info.plist",
+                ]),
+            ]
         ),
         .testTarget(
             name: "MCPScannerHelperTests",

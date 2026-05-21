@@ -44,7 +44,13 @@ if [[ -n "${DEVELOPER_ID_APPLICATION:-}" ]]; then
   codesign --force --options=runtime --timestamp \
     --sign "$DEVELOPER_ID_APPLICATION" "$OUT"
 else
-  echo "build:helper: DEVELOPER_ID_APPLICATION not set; binary is unsigned (dev mode)"
+  # Ad-hoc signing (identity "-") gives the binary a stable signature without a
+  # Developer ID cert. macOS uses this signature as the identity for TCC
+  # permission grants — without it, a binary that uses NSLocalNetworkUsageDescription
+  # will be silently denied because there's nothing for the system to remember
+  # the user's "Allow" decision against.
+  echo "build:helper: DEVELOPER_ID_APPLICATION not set; ad-hoc signing for TCC compatibility"
+  codesign --force --options=runtime --sign - "$OUT"
 fi
 
 if [[ -n "${NOTARY_PROFILE:-}" && -n "${DEVELOPER_ID_APPLICATION:-}" ]]; then

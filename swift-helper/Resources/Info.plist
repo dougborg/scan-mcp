@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>org.dougborg.mcp-scanner-helper</string>
+    <key>CFBundleName</key>
+    <string>mcp-scanner-helper</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>MIT-licensed. See LICENSE.</string>
+
+    <!-- Required for macOS Sonoma+ to allow Bonjour discovery and TCP/UDP
+         connections to discovered network scanners (AirScan / eSCL).
+         Without this key the first connection attempt is silently denied. -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>mcp-scanner-helper discovers and connects to network scanners that speak AirScan/eSCL (the same protocol Image Capture uses).</string>
+
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_uscan._tcp</string>
+        <string>_uscans._tcp</string>
+        <string>_scanner._tcp</string>
+    </array>
+</dict>
+</plist>

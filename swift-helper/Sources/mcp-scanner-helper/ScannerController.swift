@@ -13,6 +13,8 @@ final class ScannerController: NSObject, ICScannerDeviceDelegate {
     private let outDir: URL
     private let emitEvents: Bool
     private var onComplete: ((Result<[URL], Error>) -> Void)?
+    private var sessionTimer: Timer?
+    private var sessionOpened = false
 
     /// True if the params request the document-feeder functional unit, false for flatbed.
     private var wantsADF: Bool {
@@ -35,12 +37,22 @@ final class ScannerController: NSObject, ICScannerDeviceDelegate {
         if emitEvents {
             JSONOut.line(ScanEvent.stage("opening_session"))
         }
+        // Guard against silent session-open hangs (e.g. denied Local Network permission
+        // on macOS Sonoma+ when running an unsigned binary). If didOpenSessionWithError
+        // doesn't fire within 30 seconds, fail loudly.
+        sessionTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: false) { [weak self] _ in
+            guard let self = self, !self.sessionOpened else { return }
+            self.fail("session open timed out after 30s — likely a macOS permissions issue. Try running once interactively to trigger the Privacy & Security prompt, or check System Settings → Privacy & Security → Local Network.")
+        }
         scanner.requestOpenSession()
     }
 
     // MARK: - ICScannerDeviceDelegate
 
     func device(_ device: ICDevice, didOpenSessionWithError error: Error?) {
+        sessionOpened = true
+        sessionTimer?.invalidate()
+        sessionTimer = nil
         if let error = error {
             fail("opening session failed: \(error.localizedDescription)")
             return
