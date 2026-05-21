@@ -49,6 +49,14 @@ export interface EnsureEnvironmentOptions {
   verbose?: boolean;
 }
 
+type Platform = "darwin" | "linux" | "win32" | string;
+
+function effectiveBackendName(config: AppConfig, platform: Platform): "sane" | "ica" {
+  if (config.SCAN_BACKEND === "ica") return "ica";
+  if (config.SCAN_BACKEND === "sane") return "sane";
+  return platform === "darwin" ? "ica" : "sane";
+}
+
 export function ensureEnvironmentReady(options: EnsureEnvironmentOptions = {}): void {
   const nodeVersion = options.nodeVersion ?? process.version;
   const majorVersion = parseNodeMajor(nodeVersion);
@@ -84,6 +92,20 @@ export function ensureEnvironmentReady(options: EnsureEnvironmentOptions = {}): 
   }
 
   const config = options.config ?? loadConfig();
+  const backend = effectiveBackendName(config, process.platform);
+
+  if (backend === "ica") {
+    // macOS / ICA: the SANE tools aren't needed. The bundled mcp-scanner-helper
+    // is checked when actually invoked (its absence surfaces as a clear execa
+    // error). We don't preflight it here because the path resolution logic in
+    // services/backends/ica.ts has dev fallbacks the user shouldn't need to know about.
+    if (verbose) {
+      console.log("✓ macOS / ICA backend — skipping SANE tool checks");
+      console.log("\n✓ All preflight checks passed!");
+    }
+    return;
+  }
+
   const missing = detectMissingDependencies(config);
 
   if (verbose) {
