@@ -11,7 +11,11 @@ struct ListDevices: ParsableCommand {
     @Option(name: .customLong("browse-seconds"), help: "How long to browse for devices.")
     var browseSeconds: Double = 5.0
 
+    @Flag(name: .shortAndLong, help: "Emit verbose diagnostic logs to stderr.")
+    var verbose: Bool = false
+
     func run() throws {
+        JSONOut.verboseEnabled = verbose
         let browser = ScannerBrowser(browseSeconds: browseSeconds)
         browser.start(
             onMatch: { _ in /* unused; we wait for the full window */ },

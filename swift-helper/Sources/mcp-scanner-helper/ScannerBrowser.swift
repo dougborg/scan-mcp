@@ -36,8 +36,10 @@ final class ScannerBrowser: NSObject, ICDeviceBrowserDelegate {
     func start(onMatch: @escaping (ICScannerDevice) -> Void, onTimeout: @escaping () -> Void) {
         self.onMatch = onMatch
         self.onTimeout = onTimeout
+        JSONOut.verboseLog("browser: starting (mask=scanner|local|bonjour|shared, window=\(browseSeconds)s)")
         deviceBrowser.start()
         timer = Timer.scheduledTimer(withTimeInterval: browseSeconds, repeats: false) { [weak self] _ in
+            JSONOut.verboseLog("browser: timeout window reached, stopping")
             self?.stopBrowsing()
             self?.onTimeout?()
         }
@@ -62,8 +64,10 @@ final class ScannerBrowser: NSObject, ICDeviceBrowserDelegate {
 
     func deviceBrowser(_ browser: ICDeviceBrowser, didAdd device: ICDevice, moreComing: Bool) {
         guard let scanner = device as? ICScannerDevice else { return }
+        JSONOut.verboseLog("browser: added \(scanner.name ?? "[unnamed]") (id=\(scanner.persistentIDString ?? "?"))")
         discovered.append(scanner)
         if matches(scanner) {
+            JSONOut.verboseLog("browser: match found, stopping early")
             stopBrowsing()
             onMatch?(scanner)
         }

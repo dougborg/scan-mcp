@@ -2,6 +2,9 @@ import ArgumentParser
 import Foundation
 import ImageCaptureCore
 
+// See Scan.swift — same pattern, ICA delegates are weak.
+private var activeProber: AnyObject?
+
 struct DeviceOptions: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "device-options",
@@ -14,7 +17,11 @@ struct DeviceOptions: ParsableCommand {
     @Option(name: .customLong("browse-seconds"), help: "Browse window before giving up.")
     var browseSeconds: Double = 5.0
 
+    @Flag(name: .shortAndLong, help: "Emit verbose diagnostic logs to stderr.")
+    var verbose: Bool = false
+
     func run() throws {
+        JSONOut.verboseEnabled = verbose
         let browser = ScannerBrowser(browseSeconds: browseSeconds)
         var didMatch = false
 
@@ -44,7 +51,9 @@ struct DeviceOptions: ParsableCommand {
 
     private static func probe(device: ICScannerDevice) {
         let prober = OptionsProber(scanner: device)
+        activeProber = prober
         prober.start { result in
+            activeProber = nil
             switch result {
             case .success(let options):
                 JSONOut.line(options)
@@ -79,16 +88,19 @@ private final class OptionsProber: NSObject, ICScannerDeviceDelegate {
 
     func start(_ onComplete: @escaping (Result<OptionsJSON, Error>) -> Void) {
         self.onComplete = onComplete
+        JSONOut.verboseLog("prober: requesting session on \(scanner.name ?? "[unnamed]")")
         scanner.requestOpenSession()
     }
 
     func device(_ device: ICDevice, didOpenSessionWithError error: Error?) {
+        JSONOut.verboseLog("prober: didOpenSessionWithError error=\(error?.localizedDescription ?? "nil")")
         if let error = error {
             fail(error); return
         }
     }
 
     func deviceDidBecomeReady(_ device: ICDevice) {
+        JSONOut.verboseLog("prober: deviceDidBecomeReady, availableFunctionalUnitTypes=\(scanner.availableFunctionalUnitTypes)")
         // Examine functional units to enumerate sources, resolutions, color modes.
         var sources: [String] = []
         let units = scanner.availableFunctionalUnitTypes

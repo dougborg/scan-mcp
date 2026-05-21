@@ -2,6 +2,11 @@ import ArgumentParser
 import Foundation
 import ImageCaptureCore
 
+// Keeps the controller alive while CFRunLoop runs. ICScannerDevice.delegate is
+// weak, so a local-scoped controller would be deallocated before any callbacks
+// fire — silent hang.
+private var activeScanController: ScannerController?
+
 struct Scan: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "scan",
@@ -28,7 +33,11 @@ struct Scan: ParsableCommand {
     @Option(name: .customLong("browse-seconds"), help: "How long to look for the scanner.")
     var browseSeconds: Double = 8.0
 
+    @Flag(name: .shortAndLong, help: "Emit verbose diagnostic logs to stderr.")
+    var verbose: Bool = false
+
     func run() throws {
+        JSONOut.verboseEnabled = verbose
         let params: ScanParams
         do {
             guard let data = paramsJSON.data(using: .utf8) else {
@@ -85,7 +94,9 @@ struct Scan: ParsableCommand {
 
     private func startScan(scanner: ICScannerDevice, params: ScanParams, outDir: URL) {
         let controller = ScannerController(scanner: scanner, params: params, outDir: outDir, emitEvents: true)
+        activeScanController = controller
         controller.start { result in
+            activeScanController = nil
             switch result {
             case .success(let pages):
                 emitComplete(pages: pages, params: params, outDir: outDir)
@@ -95,8 +106,6 @@ struct Scan: ParsableCommand {
                 CFRunLoopStop(CFRunLoopGetCurrent())
             }
         }
-        // Keep `controller` alive for the runloop
-        _ = controller
     }
 
     private func emitComplete(pages: [URL], params: ScanParams, outDir: URL) {
