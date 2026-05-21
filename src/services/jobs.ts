@@ -1,37 +1,18 @@
-import { promises as fs, createWriteStream, type WriteStream } from "fs";
+import { promises as fs } from "fs";
 import path from "path";
 import crypto from "crypto";
 import { v4 as uuidv4 } from "uuid";
-import { execa, type Subprocess, type ExecaError } from "execa";
+import { execa } from "execa";
 import type { AppContext } from "../context.js";
 import type { AppConfig } from "../config.js";
-import { DEFAULT_RESOLUTION_DPI, LETTER_WIDTH_MM, LETTER_HEIGHT_MM, A4_WIDTH_MM, A4_HEIGHT_MM, LEGAL_WIDTH_MM, LEGAL_HEIGHT_MM } from "../constants.js";
+import { DEFAULT_RESOLUTION_DPI } from "../constants.js";
 import { selectDevice } from "./select.js";
-import { getDeviceOptions } from "./sane.js";
-
 import { tailTextFile, resolveJobPath } from "./utils.js";
+import type { BackendEvent, StartScanInput } from "./backends/backend.js";
 
-const activeJobs = new Map<string, Subprocess>();
+export type { StartScanInput } from "./backends/backend.js";
 
-export type StartScanInput = {
-  device_id?: string;
-  resolution_dpi?: number;
-  // SANE backends vary (e.g., Halftone, Binary, Gray16); accept any string
-  color_mode?: string;
-  source?: "Flatbed" | "ADF" | "ADF Duplex";
-  duplex?: boolean;
-  page_size?: "Letter" | "A4" | "Legal" | "Custom";
-  custom_size_mm?: { width: number; height: number };
-  doc_break_policy?: {
-    type?: "blank_page" | "page_count" | "timer" | "barcode" | "none";
-    blank_threshold?: number;
-    page_count?: number;
-    timer_ms?: number;
-    barcode_values?: string[];
-  };
-  output_format?: string;
-  tmp_dir?: string;
-};
+const activeJobs = new Map<string, AbortController>();
 
 export type StartScanResult = {
   job_id: string;
@@ -74,88 +55,34 @@ async function initializeJob(input: StartScanInput, ctx: AppContext): Promise<{ 
   return { runDir, manifest, eventsPath };
 }
 
-function isExecaError(e: unknown): e is ExecaError {
-  return typeof e === "object" && e !== null && "shortMessage" in e && "exitCode" in e;
-}
-
-function isNodeError(e: unknown): e is NodeJS.ErrnoException {
-  if (!(e instanceof Error)) return false;
-  return typeof e === "object" && e !== null && "code" in e;
-}
-
 async function runScan(runDir: string, manifest: Manifest, eventsPath: string, ctx: AppContext): Promise<boolean> {
-  const { config, logger } = ctx;
-  if (config.SCAN_MOCK) {
-    // Create a couple of fake TIFFs to simulate capture
-    const pageCount = 2;
-    for (let i = 1; i <= pageCount; i++) {
-      const p = path.join(runDir, `page_${String(i).padStart(4, "0")}.tiff`);
-      await fs.writeFile(p, `MOCK_TIFF_PAGE_${i}`);
-    }
-    return true;
-  }
+  const controller = new AbortController();
+  activeJobs.set(manifest.job_id, controller);
+  try {
+    const result = await ctx.backend.runScan({
+      input: manifest.params,
+      runDir,
+      ctx,
+      signal: controller.signal,
+      onEvent: async (evt: BackendEvent) => {
+        await appendEvent(eventsPath, { ts: new Date().toISOString(), ...evt });
+      },
+    });
 
-  // Real execution path
-  const candidates = planScanCommands(manifest.params, runDir, ctx);
-
-  let ran = false; // Initialize ran to false
-  for (const c of candidates) {
-    let outStream: WriteStream | undefined;
-    let errStream: WriteStream | undefined;
-    const outPath = path.join(runDir, "scanner.out.log");
-    const errPath = path.join(runDir, "scanner.err.log");
-    try {
-      await appendEvent(eventsPath, { ts: new Date().toISOString(), type: "scanner_exec", data: { bin: c.bin, args: c.args, runDir } });
-      logger.debug({ cmd: c, runDir }, "scanner exec");
-      // Do not inherit stdio; pipe and persist logs to files to avoid polluting MCP stdout
-      const proc = execa(c.bin, c.args, { cwd: runDir, shell: false });
-      outStream = createWriteStream(outPath, { flags: "a" });
-      errStream = createWriteStream(errPath, { flags: "a" });
-      proc.stdout?.pipe(outStream);
-      proc.stderr?.pipe(errStream);
-      activeJobs.set(manifest.job_id, proc);
-      await proc;
-      ran = true;
-      break;
-    } catch (err) {
+    if (!result.ran) {
+      const errPath = path.join(runDir, "scanner.err.log");
+      const outPath = path.join(runDir, "scanner.out.log");
       const stderrTail = await tailTextFile(errPath, 120);
-      const stdoutTail = await tailTextFile(outPath, 60);
-
-      const errorInfo: Record<string, unknown> = {
-        runDir,
-        cmd: c,
-        stderrTail,
-        stdoutTail,
-      };
-
-      if (isExecaError(err)) {
-        errorInfo.kind = "execa";
-        errorInfo.exitCode = err.exitCode;
-        errorInfo.signal = err.signal;
-        errorInfo.shortMessage = err.shortMessage;
-        errorInfo.originalMessage = err.originalMessage;
-      } else if (isNodeError(err)) {
-        errorInfo.kind = "node";
-        errorInfo.code = err.code;
-        errorInfo.errno = err.errno;
-        errorInfo.message = err.message;
-        errorInfo.name = err.name;
-        errorInfo.stack = err.stack;
-      } else {
-        errorInfo.kind = "unknown";
-        errorInfo.error = String(err);
-      }
-
-      await appendEvent(eventsPath, { ts: new Date().toISOString(), type: "scanner_failed", data: errorInfo });
-      logger.error(errorInfo, "scanner command failed");
-      continue;
-    } finally {
-      activeJobs.delete(manifest.job_id);
-      try { outStream?.end(); } catch {}
-      try { errStream?.end(); } catch {}
+      const stdoutTail = await tailTextFile(outPath, 40);
+      ctx.logger.error(
+        { jobId: manifest.job_id, runDir, errLog: errPath, outLog: outPath, stderrTail, stdoutTail },
+        "scan job failed"
+      );
     }
+    return result.ran;
+  } finally {
+    activeJobs.delete(manifest.job_id);
   }
-  return ran; // Return ran
 }
 
 async function processPages(runDir: string, manifest: Manifest, ctx: AppContext) {
@@ -195,17 +122,6 @@ export async function startScanJob(input: StartScanInput, ctx: AppContext): Prom
     manifest.state = "error";
     await updateManifest(runDir, manifest);
     await appendEvent(eventsPath, { ts: new Date().toISOString(), type: "job_error", data: { reason: "all candidates failed" } });
-
-    const errPath = path.join(runDir, "scanner.err.log");
-    const outPath = path.join(runDir, "scanner.out.log");
-
-    const stderrTail = await tailTextFile(errPath, 120);
-    const stdoutTail = await tailTextFile(outPath, 40);
-
-    logger.error(
-      { jobId: manifest.job_id, runDir, errLog: errPath, outLog: outPath, stderrTail, stdoutTail },
-      "scan job failed"
-    );
     return { job_id: manifest.job_id, run_dir: runDir, state: manifest.state };
   }
 
@@ -240,9 +156,10 @@ export async function cancelJob(jobId: string, ctx: AppContext, baseDir?: string
   const { logger } = ctx;
   const runDir = resolveJobPath(jobId, baseDir ?? ctx.config.INBOX_DIR);
 
-  // Terminate the running process, if it exists
-  if (activeJobs.has(jobId)) {
-    activeJobs.get(jobId)?.kill("SIGTERM", new Error("MCP_CANCEL_REQUEST"));
+  // Signal the running scan to abort, if it exists
+  const controller = activeJobs.get(jobId);
+  if (controller) {
+    controller.abort();
     activeJobs.delete(jobId);
   }
 
@@ -330,29 +247,6 @@ async function appendEvent(eventsPath: string, evt: Record<string, unknown>) {
   await fs.appendFile(eventsPath, JSON.stringify(evt) + "\n");
 }
 
-export function planScanCommands(input: StartScanInput, runDir: string, ctx: AppContext): { bin: string; args: string[] }[] {
-  const batchPattern = path.join(runDir, "page_%04d.tiff");
-  const baseArgs = buildCommonArgs(input, batchPattern);
-  return [{ bin: ctx.config.SCANIMAGE_BIN, args: baseArgs }];
-}
-
-function buildCommonArgs(input: StartScanInput, batchPattern: string): string[] {
-  const args: string[] = [];
-  if (input.device_id) args.push("-d", input.device_id);
-  if (input.resolution_dpi) args.push("--resolution", String(input.resolution_dpi));
-  if (input.color_mode) args.push("--mode", input.color_mode);
-  if (input.source) args.push("--source", input.source);
-  // Page size mapping via -x/-y in mm when provided
-  const size = pageSizeMm(input);
-  if (size) {
-    args.push("-x", `${size.width}mm`, "-y", `${size.height}mm`);
-  }
-  // Always batch pages; both scanimage and scanadf forward these
-  args.push(`--batch=${batchPattern}`);
-  args.push("--format=tiff");
-  return args;
-}
-
 export function segmentPages(pages: number[], policy?: StartScanInput["doc_break_policy"]): number[][] {
   if (!policy || !policy.type || policy.type === "none" || !policy.page_count) {
     return [pages];
@@ -371,7 +265,7 @@ export function segmentPages(pages: number[], policy?: StartScanInput["doc_break
 async function assembleTiff(inputFiles: string[], outPath: string, config: AppConfig) {
   if (inputFiles.length === 0) return;
   if (config.SCAN_MOCK) {
-    // In mock mode, directly copy the first page to simulate assembly
+    // Mock TIFFs are byte strings tiffcp can't process; just copy the first page
     await fs.copyFile(inputFiles[0], outPath);
     return;
   }
@@ -384,7 +278,7 @@ async function assembleTiff(inputFiles: string[], outPath: string, config: AppCo
 }
 
 export async function resolveEffectiveInput(input: StartScanInput, ctx: AppContext): Promise<StartScanInput> {
-  const { config } = ctx;
+  const { config, backend } = ctx;
   const out: StartScanInput = { ...input };
 
   if (!out.device_id) {
@@ -399,7 +293,7 @@ export async function resolveEffectiveInput(input: StartScanInput, ctx: AppConte
 
   if (out.device_id) {
     try {
-      const opts = await getDeviceOptions(out.device_id, ctx);
+      const opts = await backend.getDeviceOptions(out.device_id, ctx);
       if (!out.source && opts.sources && opts.sources.length) {
         const selected = opts.sources.includes("ADF Duplex")
           ? "ADF Duplex"
@@ -408,17 +302,17 @@ export async function resolveEffectiveInput(input: StartScanInput, ctx: AppConte
             : opts.sources[0];
         out.source = selected as StartScanInput["source"];
       }
-      // If duplex requested, prefer ADF Duplex when available
       if (out.duplex && opts.sources && opts.sources.includes("ADF Duplex")) {
         out.source = "ADF Duplex";
       }
       if (!out.resolution_dpi) {
-        // First, probe 300dpi explicitly; many devices support it even if not listed
-        if (out.device_id && (await probeResolution(out.device_id, DEFAULT_RESOLUTION_DPI, config))) {
+        const probedOk =
+          backend.probeResolution &&
+          out.device_id &&
+          (await backend.probeResolution(out.device_id, DEFAULT_RESOLUTION_DPI, ctx));
+        if (probedOk) {
           out.resolution_dpi = DEFAULT_RESOLUTION_DPI;
         } else if (opts.resolutions && opts.resolutions.length) {
-          // Prefer DEFAULT_RESOLUTION_DPI when available; otherwise choose the best available <= default;
-          // if none are <= default, choose the closest overall (to avoid huge files by default).
           if (opts.resolutions.includes(DEFAULT_RESOLUTION_DPI)) {
             out.resolution_dpi = DEFAULT_RESOLUTION_DPI;
           } else {
@@ -427,7 +321,6 @@ export async function resolveEffectiveInput(input: StartScanInput, ctx: AppConte
             if (le.length > 0) {
               out.resolution_dpi = le[le.length - 1];
             } else {
-              // Pick the closest above default
               out.resolution_dpi = sorted[0];
             }
           }
@@ -435,19 +328,16 @@ export async function resolveEffectiveInput(input: StartScanInput, ctx: AppConte
       }
       if (opts.color_modes && opts.color_modes.length) {
         const available = opts.color_modes;
-        // If user provided a color_mode, normalize to an available mode (case-insensitive)
         if (out.color_mode) {
           const match = available.find((m) => m.toLowerCase() === String(out.color_mode).toLowerCase());
           if (match) out.color_mode = match;
         } else {
-          // Prefer Lineart → Gray → Halftone → Color; otherwise first available
           const pref = ["Lineart", "Gray", "Halftone", "Color"];
           const selected = pref.find((p) => available.some((m) => m.toLowerCase() === p.toLowerCase())) ?? available[0];
           out.color_mode = selected;
         }
       }
     } catch {
-      // If the provided device_id cannot be probed, drop it and fall back to selection
       out.device_id = undefined;
     }
   }
@@ -457,32 +347,6 @@ export async function resolveEffectiveInput(input: StartScanInput, ctx: AppConte
   if (!out.color_mode) out.color_mode = "Lineart";
 
   return out;
-}
-
-async function probeResolution(deviceId: string, dpi: number, config: AppConfig): Promise<boolean> {
-  if (config.SCAN_MOCK) return true;
-  try {
-    await execa(config.SCANIMAGE_BIN, ["-n", "-d", deviceId, "--resolution", String(dpi)], { shell: false });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function pageSizeMm(input: StartScanInput): { width: number; height: number } | null {
-  if (input.page_size === "Custom" && input.custom_size_mm) {
-    return { width: input.custom_size_mm.width, height: input.custom_size_mm.height };
-  }
-  switch (input.page_size) {
-    case "Letter":
-      return { width: LETTER_WIDTH_MM, height: LETTER_HEIGHT_MM };
-    case "A4":
-      return { width: A4_WIDTH_MM, height: A4_HEIGHT_MM };
-    case "Legal":
-      return { width: LEGAL_WIDTH_MM, height: LEGAL_HEIGHT_MM };
-    default:
-      return null;
-  }
 }
 
 async function stateDir(config: AppConfig) {

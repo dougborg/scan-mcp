@@ -5,6 +5,7 @@ import type { AppConfig } from "../config.js";
 import type { AppContext } from "../context.js";
 import type { Logger } from "pino";
 import { version } from "../mcp.js";
+import { MockBackend } from "../services/backends/mock.js";
 
 const baseConfig: AppConfig = {
   SCAN_MOCK: true,
@@ -19,7 +20,7 @@ const baseConfig: AppConfig = {
 };
 
 const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } as unknown as Logger;
-const ctx: AppContext = { config: baseConfig, logger };
+const ctx: AppContext = { config: baseConfig, logger, backend: new MockBackend() };
 
 describe("registerScanServer", () => {
   it("registers expected tools and resources", () => {

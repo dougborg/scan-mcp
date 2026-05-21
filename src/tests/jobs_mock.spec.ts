@@ -2,6 +2,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { startScanJob, getJobStatus, cancelJob } from "../services/jobs.js";
+import { MockBackend } from "../services/backends/mock.js";
 import type { AppConfig } from "../config.js";
 import type { AppContext } from "../context.js";
 import type { Logger } from "pino";
@@ -20,7 +21,7 @@ const config: AppConfig = {
   PERSIST_LAST_USED_DEVICE: true,
 };
 const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } as unknown as Logger;
-const ctx: AppContext = { config, logger };
+const ctx: AppContext = { config, logger, backend: new MockBackend() };
 
 beforeAll(async () => {
   await fs.mkdir(tmpRoot, { recursive: true });

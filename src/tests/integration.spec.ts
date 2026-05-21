@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, beforeAll, afterAll, vi } from "vites
 import fs from "fs";
 import path from "path";
 import { startScanJob, getJobStatus, cancelJob, listJobs } from "../services/jobs.js";
+import { MockBackend } from "../services/backends/mock.js";
 import type { AppConfig } from "../config.js";
 import type { AppContext } from "../context.js";
 import type { Logger } from "pino";
@@ -28,7 +29,7 @@ describe("integration tests", () => {
     PERSIST_LAST_USED_DEVICE: true,
   };
   const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } as unknown as Logger;
-  const ctx: AppContext = { config, logger };
+  const ctx: AppContext = { config, logger, backend: new MockBackend() };
 
   beforeAll(() => {
     fs.mkdirSync(tmpInboxDir, { recursive: true });

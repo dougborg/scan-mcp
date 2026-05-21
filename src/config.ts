@@ -6,9 +6,13 @@ export const ConfigSchema = z.object({
   LOG_LEVEL: z.string().default("info"),
   INBOX_DIR: z.string().default("scanned_documents/inbox"),
   SCAN_MOCK: z.boolean().default(false),
+  // Backend selection. Unset → auto-detect by platform (linux → sane, darwin → ica when available).
+  SCAN_BACKEND: z.enum(["sane", "ica"]).optional(),
   SCANIMAGE_BIN: z.string().default("scanimage"),
   TIFFCP_BIN: z.string().default("tiffcp"),
   IM_CONVERT_BIN: z.string().default("convert"),
+  // Override path to the bundled mcp-scanner-helper binary (ICA backend).
+  MCP_SCANNER_HELPER_BIN: z.string().optional(),
   // By default, exclude camera-like backends like v4l from device lists
   SCAN_EXCLUDE_BACKENDS: z.array(z.string()).default(["v4l"]),
   SCAN_PREFER_BACKENDS: z.array(z.string()).default([]),
@@ -25,9 +29,11 @@ export function loadConfig(): AppConfig {
     LOG_LEVEL: process.env.LOG_LEVEL,
     INBOX_DIR: process.env.INBOX_DIR,
     SCAN_MOCK: parseEnvBool(process.env.SCAN_MOCK),
+    SCAN_BACKEND: process.env.SCAN_BACKEND,
     SCANIMAGE_BIN: process.env.SCANIMAGE_BIN,
     TIFFCP_BIN: process.env.TIFFCP_BIN,
     IM_CONVERT_BIN: process.env.IM_CONVERT_BIN,
+    MCP_SCANNER_HELPER_BIN: process.env.MCP_SCANNER_HELPER_BIN,
     SCAN_EXCLUDE_BACKENDS: parseCsv(process.env.SCAN_EXCLUDE_BACKENDS),
     SCAN_PREFER_BACKENDS: parseCsv(process.env.SCAN_PREFER_BACKENDS),
     PERSIST_LAST_USED_DEVICE: parseEnvBool(process.env.PERSIST_LAST_USED_DEVICE),

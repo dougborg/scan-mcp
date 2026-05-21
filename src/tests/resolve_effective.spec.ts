@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { resolveEffectiveInput, startScanJob } from "../services/jobs.js";
-import * as sane from "../services/sane.js";
 import path from "path";
 import fs from "fs";
 import type { AppConfig } from "../config.js";
 import type { AppContext } from "../context.js";
 import type { Logger } from "pino";
+import type { Backend, Device, DeviceOptions } from "../services/backends/backend.js";
+import { MockBackend } from "../services/backends/mock.js";
 
 const tmpRoot = path.resolve(__dirname, "..", ".tmp-tests");
 
@@ -21,7 +22,16 @@ const config: AppConfig = {
   PERSIST_LAST_USED_DEVICE: true,
 };
 const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } as unknown as Logger;
-const ctx: AppContext = { config, logger };
+
+function makeBackend(overrides: { getDeviceOptions?: (id: string) => Promise<DeviceOptions>; listDevices?: () => Promise<Device[]> } = {}): Backend {
+  return {
+    name: "mock",
+    listDevices: vi.fn(async () => (overrides.listDevices ? overrides.listDevices() : [{ id: "dev" }])),
+    getDeviceOptions: vi.fn(async (id: string) => (overrides.getDeviceOptions ? overrides.getDeviceOptions(id) : ({}))),
+    runScan: vi.fn(async () => ({ ran: true })),
+    probeResolution: vi.fn(async () => true),
+  };
+}
 
 describe("resolveEffectiveInput", () => {
   beforeEach(() => {
@@ -29,55 +39,71 @@ describe("resolveEffectiveInput", () => {
   });
 
   it("prefers ADF Duplex when duplex is true and supported", async () => {
-    vi.spyOn(sane, "getDeviceOptions").mockResolvedValue({ sources: ["Flatbed", "ADF", "ADF Duplex"], resolutions: [300] });
+    const backend = makeBackend({ getDeviceOptions: async () => ({ sources: ["Flatbed", "ADF", "ADF Duplex"], resolutions: [300] }) });
+    const ctx: AppContext = { config, logger, backend };
     const eff = await resolveEffectiveInput({ device_id: "dev", duplex: true }, ctx);
     expect(eff.source).toBe("ADF Duplex");
   });
 
   it("picks 300dpi when available", async () => {
-    vi.spyOn(sane, "getDeviceOptions").mockResolvedValue({ resolutions: [200, 300, 600] });
+    const backend = makeBackend({ getDeviceOptions: async () => ({ resolutions: [200, 300, 600] }) });
+    const ctx: AppContext = { config, logger, backend };
     const eff = await resolveEffectiveInput({ device_id: "dev" }, ctx);
     expect(eff.resolution_dpi).toBe(300);
   });
 
   it("prefers 300 via probe even when missing from list", async () => {
-    vi.spyOn(sane, "getDeviceOptions").mockResolvedValue({ resolutions: [200, 600] });
+    const backend = makeBackend({ getDeviceOptions: async () => ({ resolutions: [200, 600] }) });
+    const ctx: AppContext = { config, logger, backend };
     const eff = await resolveEffectiveInput({ device_id: "dev" }, ctx);
     expect(eff.resolution_dpi).toBe(300);
   });
 
   it("still uses 300 via probe when all listed > 300", async () => {
-    vi.spyOn(sane, "getDeviceOptions").mockResolvedValue({ resolutions: [400, 600] });
+    const backend = makeBackend({ getDeviceOptions: async () => ({ resolutions: [400, 600] }) });
+    const ctx: AppContext = { config, logger, backend };
     const eff = await resolveEffectiveInput({ device_id: "dev" }, ctx);
     expect(eff.resolution_dpi).toBe(300);
   });
 
   it("falls back to 300 when device does not report resolutions", async () => {
-    vi.spyOn(sane, "getDeviceOptions").mockResolvedValue({});
+    const backend = makeBackend({ getDeviceOptions: async () => ({}) });
+    const ctx: AppContext = { config, logger, backend };
     const eff = await resolveEffectiveInput({ device_id: "dev" }, ctx);
     expect(eff.resolution_dpi).toBe(300);
   });
 
   it("defaults color mode to Lineart and prefers Lineart > Gray > Color", async () => {
-    vi.spyOn(sane, "getDeviceOptions").mockResolvedValue({ color_modes: ["Color", "Gray", "Lineart"], resolutions: [300] });
+    let optsForCall: DeviceOptions = {};
+    const backend: Backend = {
+      name: "mock",
+      listDevices: vi.fn(async () => [{ id: "dev" }]),
+      getDeviceOptions: vi.fn(async () => optsForCall),
+      runScan: vi.fn(async () => ({ ran: true })),
+      probeResolution: vi.fn(async () => true),
+    };
+    const ctx: AppContext = { config, logger, backend };
+
+    optsForCall = { color_modes: ["Color", "Gray", "Lineart"], resolutions: [300] };
     const eff1 = await resolveEffectiveInput({ device_id: "dev" }, ctx);
     expect(eff1.color_mode).toBe("Lineart");
 
-    vi.spyOn(sane, "getDeviceOptions").mockResolvedValue({ color_modes: ["Color", "Gray"], resolutions: [300] });
+    optsForCall = { color_modes: ["Color", "Gray"], resolutions: [300] };
     const eff2 = await resolveEffectiveInput({ device_id: "dev" }, ctx);
     expect(eff2.color_mode).toBe("Gray");
 
-    vi.spyOn(sane, "getDeviceOptions").mockResolvedValue({ color_modes: ["Color"], resolutions: [300] });
+    optsForCall = { color_modes: ["Color"], resolutions: [300] };
     const eff3 = await resolveEffectiveInput({ device_id: "dev" }, ctx);
     expect(eff3.color_mode).toBe("Color");
 
-    vi.spyOn(sane, "getDeviceOptions").mockResolvedValue({});
+    optsForCall = {};
     const eff4 = await resolveEffectiveInput({ device_id: "dev" }, ctx);
     expect(eff4.color_mode).toBe("Lineart");
   });
 
   it("probes 300dpi even when not listed and uses it if accepted", async () => {
-    vi.spyOn(sane, "getDeviceOptions").mockResolvedValue({ resolutions: [50, 600] });
+    const backend = makeBackend({ getDeviceOptions: async () => ({ resolutions: [50, 600] }) });
+    const ctx: AppContext = { config, logger, backend };
     const eff = await resolveEffectiveInput({ device_id: "dev" }, ctx);
     expect(eff.resolution_dpi).toBe(300);
   });
@@ -94,7 +120,8 @@ describe("last-used device persistence (mock)", () => {
       INBOX_DIR: path.join(tmp, "inbox"),
       PERSIST_LAST_USED_DEVICE: true,
     };
-    const testCtx: AppContext = { config: testConfig, logger };
+    const backend = new MockBackend();
+    const testCtx: AppContext = { config: testConfig, logger, backend };
 
     await startScanJob({}, testCtx);
     const statePath = path.join(tmp, "..", ".state", "scan-mcp.json");
