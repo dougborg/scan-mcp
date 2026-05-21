@@ -15,7 +15,7 @@ struct ListDevices: ParsableCommand {
     var verbose: Bool = false
 
     func run() throws {
-        JSONOut.verboseEnabled = verbose
+        Log.mirrorToStderr = verbose
         let browser = ScannerBrowser(browseSeconds: browseSeconds)
         browser.start(
             onMatch: { _ in /* unused; we wait for the full window */ },

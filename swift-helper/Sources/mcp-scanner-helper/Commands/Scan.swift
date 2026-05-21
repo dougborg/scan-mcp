@@ -37,7 +37,7 @@ struct Scan: ParsableCommand {
     var verbose: Bool = false
 
     func run() throws {
-        JSONOut.verboseEnabled = verbose
+        Log.mirrorToStderr = verbose
         let params: ScanParams
         do {
             guard let data = paramsJSON.data(using: .utf8) else {

@@ -37,7 +37,7 @@ final class ScannerController: NSObject, ICScannerDeviceDelegate {
         if emitEvents {
             JSONOut.line(ScanEvent.stage("opening_session"))
         }
-        JSONOut.verboseLog("controller: requesting session on \(scanner.name ?? "[unnamed]")")
+        Log.controller.debug("requesting session on \(scanner.name ?? "[unnamed]")")
         // 30s watchdog so a denied Local Network permission (or any other stall)
         // surfaces as an error event rather than a silent hang.
         sessionTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: false) { [weak self] _ in
@@ -50,7 +50,7 @@ final class ScannerController: NSObject, ICScannerDeviceDelegate {
     // MARK: - ICScannerDeviceDelegate
 
     func device(_ device: ICDevice, didOpenSessionWithError error: Error?) {
-        JSONOut.verboseLog("controller: didOpenSessionWithError error=\(error?.localizedDescription ?? "nil")")
+        Log.controller.debug("didOpenSessionWithError error=\(error?.localizedDescription ?? "nil")")
         sessionOpened = true
         sessionTimer?.invalidate()
         sessionTimer = nil
@@ -62,20 +62,20 @@ final class ScannerController: NSObject, ICScannerDeviceDelegate {
     }
 
     func device(_ device: ICDevice, didCloseSessionWithError error: Error?) {
-        JSONOut.verboseLog("controller: didCloseSessionWithError error=\(error?.localizedDescription ?? "nil")")
+        Log.controller.debug("didCloseSessionWithError error=\(error?.localizedDescription ?? "nil")")
     }
 
     func device(_ device: ICDevice, didEncounterError error: Error?) {
-        JSONOut.verboseLog("controller: didEncounterError error=\(error?.localizedDescription ?? "nil")")
+        Log.controller.error("didEncounterError error=\(error?.localizedDescription ?? "nil")")
         fail("device error: \(error?.localizedDescription ?? "unknown")")
     }
 
     func didRemove(_ device: ICDevice) {
-        JSONOut.verboseLog("controller: didRemove")
+        Log.controller.debug("didRemove")
     }
 
     func deviceDidBecomeReady(_ device: ICDevice) {
-        JSONOut.verboseLog("controller: deviceDidBecomeReady, wantsADF=\(wantsADF)")
+        Log.controller.debug("deviceDidBecomeReady, wantsADF=\(wantsADF)")
         if emitEvents {
             JSONOut.line(ScanEvent.stage("selecting_functional_unit"))
         }
@@ -84,7 +84,7 @@ final class ScannerController: NSObject, ICScannerDeviceDelegate {
     }
 
     func scannerDevice(_ scanner: ICScannerDevice, didSelect functionalUnit: ICScannerFunctionalUnit, error: Error?) {
-        JSONOut.verboseLog("controller: didSelect functionalUnit type=\(functionalUnit.type.rawValue) error=\(error?.localizedDescription ?? "nil")")
+        Log.controller.debug("didSelect functionalUnit type=\(functionalUnit.type.rawValue) error=\(error?.localizedDescription ?? "nil")")
         if let error = error {
             fail("selecting functional unit failed: \(error.localizedDescription)")
             return
@@ -109,7 +109,7 @@ final class ScannerController: NSObject, ICScannerDeviceDelegate {
     }
 
     func scannerDevice(_ scanner: ICScannerDevice, didScanTo url: URL) {
-        JSONOut.verboseLog("controller: didScanTo \(url.path)")
+        Log.controller.debug("didScanTo \(url.path)")
         pageCounter += 1
         let dest = outDir.appendingPathComponent(String(format: "page_%04d.tiff", pageCounter))
         do {
@@ -130,7 +130,7 @@ final class ScannerController: NSObject, ICScannerDeviceDelegate {
     }
 
     func scannerDevice(_ scanner: ICScannerDevice, didCompleteScanWithError error: Error?) {
-        JSONOut.verboseLog("controller: didCompleteScanWithError error=\(error?.localizedDescription ?? "nil") pages=\(scannedURLs.count)")
+        Log.controller.debug("didCompleteScanWithError error=\(error?.localizedDescription ?? "nil") pages=\(scannedURLs.count)")
         if let error = error {
             // ADF "no more pages" is a normal end-of-batch — surface as success.
             let nsError = error as NSError

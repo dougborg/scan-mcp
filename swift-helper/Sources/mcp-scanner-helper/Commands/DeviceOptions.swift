@@ -21,7 +21,7 @@ struct DeviceOptions: ParsableCommand {
     var verbose: Bool = false
 
     func run() throws {
-        JSONOut.verboseEnabled = verbose
+        Log.mirrorToStderr = verbose
         let browser = ScannerBrowser(browseSeconds: browseSeconds)
         var didMatch = false
 
@@ -88,19 +88,19 @@ private final class OptionsProber: NSObject, ICScannerDeviceDelegate {
 
     func start(_ onComplete: @escaping (Result<OptionsJSON, Error>) -> Void) {
         self.onComplete = onComplete
-        JSONOut.verboseLog("prober: requesting session on \(scanner.name ?? "[unnamed]")")
+        Log.prober.debug("requesting session on \(scanner.name ?? "[unnamed]")")
         scanner.requestOpenSession()
     }
 
     func device(_ device: ICDevice, didOpenSessionWithError error: Error?) {
-        JSONOut.verboseLog("prober: didOpenSessionWithError error=\(error?.localizedDescription ?? "nil")")
+        Log.prober.debug("didOpenSessionWithError error=\(error?.localizedDescription ?? "nil")")
         if let error = error {
             fail(error); return
         }
     }
 
     func deviceDidBecomeReady(_ device: ICDevice) {
-        JSONOut.verboseLog("prober: deviceDidBecomeReady, availableFunctionalUnitTypes=\(scanner.availableFunctionalUnitTypes)")
+        Log.prober.debug("deviceDidBecomeReady, availableFunctionalUnitTypes=\(scanner.availableFunctionalUnitTypes)")
         // Examine functional units to enumerate sources, resolutions, color modes.
         var sources: [String] = []
         let units = scanner.availableFunctionalUnitTypes

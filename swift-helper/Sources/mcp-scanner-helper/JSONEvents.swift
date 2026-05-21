@@ -1,11 +1,12 @@
 import Foundation
 
-/// Structured JSON output for one-line events and final tool results.
-/// All output goes to stdout. Diagnostic / progress messages go to stderr.
+/// Protocol output for the helper. Two channels:
+///   * `line(...)` — single-line JSON on stdout; the caller parses one object per line
+///   * `diagnostic(...)` — error/warning text on stderr; always visible regardless of --verbose
+///
+/// Trace logging is in `Log` (os.Logger-backed). Keep them separate: this file
+/// is for the protocol clients depend on, not for debug output.
 enum JSONOut {
-    /// Toggle by --verbose; gates the verboseLog() output.
-    nonisolated(unsafe) static var verboseEnabled = false
-
     private static let encoder: JSONEncoder = {
         let e = JSONEncoder()
         e.outputFormatting = []  // single-line, no pretty-print
@@ -25,12 +26,6 @@ enum JSONOut {
     /// Print a diagnostic message to stderr. Always shown.
     static func diagnostic(_ msg: String) {
         FileHandle.standardError.write(Data((msg + "\n").utf8))
-    }
-
-    /// Verbose-only log to stderr, prefixed with [verbose]. Shown only when --verbose is set.
-    static func verboseLog(_ msg: @autoclosure () -> String) {
-        guard verboseEnabled else { return }
-        FileHandle.standardError.write(Data(("[verbose] " + msg() + "\n").utf8))
     }
 }
 
