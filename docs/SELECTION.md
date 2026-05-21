@@ -28,11 +28,12 @@ If no viable devices remain (e.g., only excluded backends), the system’s defau
 ## Resolution Choice
 
 - Target: 300 dpi by default.
-- Probe: `scanimage -n -d <id> --resolution 300` to avoid scanning during capability check.
+- Probe (SANE backend only): `scanimage -n -d <id> --resolution 300` to verify acceptance without performing a scan.
   - If supported: use 300.
   - Otherwise: choose the nearest in the advertised list:
     - If any ≤ 300: pick the highest ≤ 300.
     - Else: pick the smallest above 300.
+- ICA backend (macOS): the helper enumerates `supportedResolutions` directly from ImageCaptureCore — no probe call needed. The same "300 if listed, else nearest" logic applies to the returned list.
 - In mock mode (`SCAN_MOCK=true`): treat 300 as supported.
 
 ## Color Mode Choice

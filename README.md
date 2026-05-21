@@ -75,17 +75,37 @@ scan-mcp --http
 
 ## System Requirements
 
-- Linux with SANE utilities: `scanimage` (and optionally `scanadf`)
+scan-mcp supports both Linux (via SANE) and macOS (via Apple's ImageCaptureCore framework).
+
+### Linux
+
+- SANE utilities: `scanimage` (and optionally `scanadf`)
 - TIFF tools: `tiffcp` (preferred) or ImageMagick `convert`
+
+### macOS
+
+- macOS 13 (Ventura) or newer.
+- No external tools required — the npm package ships a bundled native helper binary (`mcp-scanner-helper`) that wraps ImageCaptureCore.
+- Network scanners that speak AirScan / eSCL are auto-discovered via Bonjour (same as the built-in `Image Capture.app`); USB scanners and macOS-shared scanners are also supported.
+- First-time use may prompt for ICA / network permission in System Settings → Privacy & Security.
+- Apple Intelligence-powered features (autoname, summarize) require macOS 26+ and are runtime-detected — query the `get_capabilities` tool to see what's available.
+
+### Output formats
+
+- `tiff` (default) — one TIFF per page plus a multipage doc TIFF assembled at the end.
+- `pdf` — same as TIFF, then combined into a single PDF.
+- `pdf-searchable` (macOS/ICA only) — same as PDF, plus a Vision-OCR'd invisible text layer embedded behind each page. Matches what Image Capture's "OCR" checkbox or Adobe Acrobat's "Recognize Text" produce: visually identical to the scan, but text is selectable in Preview, searchable in Spotlight, and extractable with `pdftotext`.
 
 ## Environment Variables
 
-- `SCAN_MOCK` (default: `false`): mock SANE calls and generate fake TIFFs for testing.
+- `SCAN_MOCK` (default: `false`): use a mock backend that synthesizes fake devices and TIFFs. Useful for testing.
+- `SCAN_BACKEND` (optional, `sane` | `ica`): force a specific backend. Default is platform autodetect (darwin → ica, others → sane).
 - `INBOX_DIR` (default: `scanned_documents/inbox`): base directory for job runs and artifacts.
-- `SCANIMAGE_BIN` / `SCANADF_BIN` (defaults: `scanimage` / `scanadf`): override binary paths.
-- `TIFFCP_BIN` / `IM_CONVERT_BIN` (defaults: `tiffcp` / `convert`): multipage assembly tools.
-- `SCAN_EXCLUDE_BACKENDS` (CSV): backends to exclude (e.g., `v4l`).
-- `SCAN_PREFER_BACKENDS` (CSV): preferred backends (e.g., `epjitsu,epson2`).
+- `MCP_SCANNER_HELPER_BIN` (macOS only): override the path to the bundled `mcp-scanner-helper` binary. Useful for local development.
+- `SCANIMAGE_BIN` / `SCANADF_BIN` (defaults: `scanimage` / `scanadf`): override SANE binary paths (Linux/SANE only).
+- `TIFFCP_BIN` / `IM_CONVERT_BIN` (defaults: `tiffcp` / `convert`): multipage assembly tools (Linux/SANE only).
+- `SCAN_EXCLUDE_BACKENDS` (CSV, default: `v4l`): backend prefixes to exclude (SANE only).
+- `SCAN_PREFER_BACKENDS` (CSV): preferred backend prefixes (SANE only).
 - `PERSIST_LAST_USED_DEVICE` (default: `true`): persist and lightly prefer last used device.
 - `MCP_HTTP_PORT` (default: `3001`): TCP port for the HTTP transport.
 
