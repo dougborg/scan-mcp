@@ -38,3 +38,39 @@ jobs:
         run: npm run pack:check
       - name: Test
         run: npm test -- --run
+
+  verify-macos:
+    runs-on: macos-14
+    permissions:
+      contents: read
+    env:
+      SCAN_MOCK: 'true'
+      INBOX_DIR: "${{ github.workspace }}/.tmp/inbox"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Prepare inbox
+        run: mkdir -p "$INBOX_DIR"
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Build Swift helper (unsigned)
+        # Builds the universal binary and places it in dist/bin/. No signing in CI
+        # because Developer ID certs live in the local keychain; release-time
+        # signing is handled separately via the publish workflow.
+        run: npm run build
+      - name: Verify helper binary
+        run: |
+          test -f dist/bin/mcp-scanner-helper
+          file dist/bin/mcp-scanner-helper
+          dist/bin/mcp-scanner-helper --help
+          dist/bin/mcp-scanner-helper capabilities
+      - name: Test
+        run: npm test -- --run
