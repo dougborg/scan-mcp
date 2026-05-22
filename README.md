@@ -20,7 +20,7 @@ Minimal MCP server for scanner capture (ADF/duplex/page-size), batching, and mul
 - Smart device selection (prefers ADF/duplex, avoids camera backends), robust defaults
 - Local-first transports: stdio by default to keep everything on-device, optional HTTP for your own network deployments
 
-Note: This package targets Node 22 and Linux SANE backends (`scanimage`).
+Targets Node 22+ on Linux (via SANE / `scanimage`) and macOS (via Apple's ImageCaptureCore through a bundled native helper). See [System Requirements](#system-requirements).
 
 ## Quick Start (local stdio, default)
 

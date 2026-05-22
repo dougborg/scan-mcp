@@ -1,4 +1,4 @@
-SHELL := /usr/bin/bash
+SHELL := $(shell command -v bash)
 .ONESHELL:
 
 # Local dev Makefile for scan-mcp only
@@ -31,6 +31,14 @@ pack-check:
 test:
 	npm test -- --run
 
+.PHONY: test-swift
+test-swift:
+	@if [ "$$(uname)" = "Darwin" ]; then \
+		npm run test:swift; \
+	else \
+		echo "skipping swift tests (non-darwin host)"; \
+	fi
+
 .PHONY: verify
 verify:
 	$(MAKE) install
@@ -39,3 +47,4 @@ verify:
 	$(MAKE) build
 	$(MAKE) pack-check
 	$(MAKE) test
+	$(MAKE) test-swift

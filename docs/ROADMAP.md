@@ -18,7 +18,7 @@ streaming would improve feedback for page-by-page progress, errors, and completi
 - Cancellation utility (to supersede `cancel_job`):
   https://modelcontextprotocol.io/specification/2025-03-26/basic/utilities/cancellation
 
-## Cross-platform Backends
+## Windows Backend
 
-Support macOS and Windows scanning backends in addition to Linux SANE (`scanimage`).
+macOS (via ImageCaptureCore) and Linux (via SANE `scanimage`) are now both supported through the `Backend` interface in `src/services/backends/`. A Windows backend (likely via WIA — Windows Image Acquisition) is the remaining cross-platform gap.
 
