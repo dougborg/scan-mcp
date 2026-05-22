@@ -85,10 +85,21 @@ async function runScan(runDir: string, manifest: Manifest, eventsPath: string, c
   }
 }
 
-async function processPages(runDir: string, manifest: Manifest, ctx: AppContext) {
+export async function processPages(
+  runDir: string,
+  manifest: Manifest,
+  ctx: AppContext,
+  sourcePagePaths?: readonly string[]
+) {
   const { config } = ctx;
-  const entries = await fs.readdir(runDir);
-  const pageFiles = entries.filter((f) => f.startsWith("page_") && f.endsWith(".tiff")).sort();
+  let pageFiles: string[];
+  if (sourcePagePaths) {
+    pageFiles = sourcePagePaths.map((_, idx) => `page_${String(idx + 1).padStart(4, "0")}.tiff`);
+    await Promise.all(sourcePagePaths.map((src, idx) => fs.copyFile(src, path.join(runDir, pageFiles[idx]))));
+  } else {
+    const entries = await fs.readdir(runDir);
+    pageFiles = entries.filter((f) => f.startsWith("page_") && f.endsWith(".tiff")).sort();
+  }
   for (let idx = 0; idx < pageFiles.length; idx++) {
     const f = pageFiles[idx];
     const p = path.join(runDir, f);
