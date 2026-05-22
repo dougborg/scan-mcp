@@ -20,7 +20,7 @@ export type StartScanResult = {
   state: "running" | "completed" | "cancelled" | "error";
 };
 
-type Manifest = {
+export type Manifest = {
   job_id: string;
   device_id: string | null;
   created_at: string;
@@ -28,6 +28,11 @@ type Manifest = {
   pages: { index: number; path: string; sha256: string }[];
   documents: { index: number; pages: number[]; path: string; sha256: string }[];
   state: "running" | "completed" | "cancelled" | "error";
+  source_jobs?: {
+    front: string;
+    back: string;
+    back_order: "reversed" | "natural";
+  };
 };
 
 async function initializeJob(input: StartScanInput, ctx: AppContext): Promise<{ runDir: string; manifest: Manifest; eventsPath: string }> {

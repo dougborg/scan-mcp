@@ -5,6 +5,7 @@ import { z } from "zod";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { AppContext } from "../context.js";
 import { startScanJob, getJobStatus, cancelJob, listJobs } from "../services/jobs.js";
+import { assembleDuplex } from "../services/duplex.js";
 import { resolveJobPath } from "../services/utils.js";
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
@@ -87,6 +88,19 @@ export function registerScanServer(server: McpServer, ctx: AppContext) {
     "List recent scan jobs from the inbox directory",
     ListJobsInput.shape,
     async (args) => ({ content: [{ type: "text", text: JSON.stringify({ jobs: await listJobs(ctx, ListJobsInput.parse(args)) }) }] })
+  );
+
+  const AssembleDuplexShape = z.object({
+    front_job_id: z.string(),
+    back_job_id: z.string(),
+    back_order: nullToUndef(z.enum(["reversed", "natural"])),
+    dry_run: nullToUndef(z.boolean()),
+  });
+  server.tool(
+    "assemble_duplex",
+    "Interleave two completed simplex scan jobs into a duplex document. Run start_scan_job once for fronts, flip stack, run again for backs, then call this to produce a merged job. back_order defaults to 'reversed' (matches ADF flip). dry_run returns the planned page order without writing.",
+    AssembleDuplexShape.shape,
+    async (args) => ({ content: [{ type: "text", text: JSON.stringify(await assembleDuplex(AssembleDuplexShape.parse(args), ctx)) }] })
   );
 
   // Resource mirrors via tools for agents that don't support MCP resources
