@@ -72,5 +72,10 @@ jobs:
           file dist/bin/mcp-scanner-helper
           dist/bin/mcp-scanner-helper --help
           dist/bin/mcp-scanner-helper capabilities
+      - name: Swift tests (hardware-free)
+        # Exercises SearchablePDF round-trip, ScanParams Codable, JSON event
+        # wire format, and CLI smoke tests via Process. ICA-dependent paths
+        # (list-devices, scan against real hardware) aren't exercised here.
+        run: swift test --package-path swift-helper
       - name: Test
         run: npm test -- --run

@@ -13,6 +13,7 @@
     "build": "tsc -p tsconfig.json && npm run build:helper",
     "build:ts": "tsc -p tsconfig.json",
     "build:helper": "bash scripts/build-helper.sh",
+    "test:swift": "swift test --package-path swift-helper",
     "prepack": "npm run build",
     "pack:dry": "npm pack --dry-run --cache .npm-cache-pack",
     "pack:check": "node scripts/check-tarball.mjs",

@@ -100,13 +100,10 @@ enum SearchablePDF {
         }
         guard let observations = request.results else { return }
 
-        pdfContext.saveGState()
-        pdfContext.setTextDrawingMode(.invisible)
-
         for obs in observations {
             guard let candidate = obs.topCandidates(1).first else { continue }
             let text = candidate.string
-            // Vision's boundingBox is normalized [0,1] in bottom-left origin coords (same as CGPDFContext).
+            // Vision's boundingBox is normalized [0,1] in bottom-left origin (same as PDF page).
             let bbox = obs.boundingBox
             let pdfRect = CGRect(
                 x: bbox.origin.x * pageRect.width,
@@ -114,24 +111,38 @@ enum SearchablePDF {
                 width: bbox.width * pageRect.width,
                 height: bbox.height * pageRect.height
             )
-
-            // Heuristic: font size matches roughly the bbox height. CoreText will render
-            // the glyphs and clip to the bbox if needed. Even if visual fit is imperfect,
-            // the glyphs are added to the PDF content stream and are searchable.
-            let fontSize = max(4.0, min(72.0, pdfRect.height * 0.85))
-            let font = CTFontCreateWithName("Helvetica" as CFString, fontSize, nil)
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: font,
-                .foregroundColor: CGColor(gray: 0, alpha: 0),  // belt-and-suspenders alongside .invisible
-            ]
-            let attrString = NSAttributedString(string: text, attributes: attrs)
-
-            let framesetter = CTFramesetterCreateWithAttributedString(attrString)
-            let path = CGPath(rect: pdfRect, transform: nil)
-            let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: 0, length: 0), path, nil)
-            CTFrameDraw(frame, pdfContext)
+            drawInvisibleLine(text: text, in: pdfRect, into: pdfContext)
         }
+    }
 
+    /// Draw one line of invisible-but-extractable text. We use CTLineDraw rather than
+    /// CTFrameDraw because we want strict control over the text matrix — and we must
+    /// re-set `setTextDrawingMode(.invisible)` *per line*, since Core Text's runs
+    /// re-stamp the text mode based on the attributed string's attributes. Earlier
+    /// attempts to set it once at the top of the function were silently overridden.
+    ///
+    /// Result: glyphs go into the PDF content stream as `Tj` operators preceded by
+    /// `3 Tr` (text rendering mode = invisible), which PDFKit's text-extraction layer
+    /// picks up. The visual rendering shows nothing.
+    private static func drawInvisibleLine(text: String, in rect: CGRect, into pdfContext: CGContext) {
+        // Heuristic font size — CTLine isn't going to wrap, so this only affects how the
+        // glyph positions appear in the PDF (invisible to the eye either way).
+        let fontSize = max(4.0, min(72.0, rect.height * 0.85))
+        let font = CTFontCreateWithName("Helvetica" as CFString, fontSize, nil)
+        let attrString = NSAttributedString(string: text, attributes: [
+            .font: font,
+            // No alpha-0 trick: that was being interpreted as "this text shouldn't be
+            // searchable either." setTextDrawingMode(.invisible) on the CGContext is
+            // the right knob for "invisible but extractable."
+        ])
+        let line = CTLineCreateWithAttributedString(attrString)
+
+        pdfContext.saveGState()
+        pdfContext.setTextDrawingMode(.invisible)
+        // Position the text baseline at the bottom of the bbox.
+        pdfContext.textMatrix = .identity
+        pdfContext.textPosition = CGPoint(x: rect.minX, y: rect.minY)
+        CTLineDraw(line, pdfContext)
         pdfContext.restoreGState()
     }
 }
