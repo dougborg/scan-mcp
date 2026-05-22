@@ -17,11 +17,7 @@ final class ScannerController: NSObject, @preconcurrency ICScannerDeviceDelegate
     private var sessionTimer: Timer?
     private var sessionOpened = false
 
-    /// True if the params request the document-feeder functional unit, false for flatbed.
-    private var wantsADF: Bool {
-        guard let src = params.source else { return false }
-        return src.uppercased().contains("ADF")
-    }
+    private var wantsADF: Bool { params.source?.wantsADF ?? false }
 
     init(scanner: ICScannerDevice, params: ScanParams, outDir: URL, emitEvents: Bool) {
         self.scanner = scanner
@@ -92,14 +88,11 @@ final class ScannerController: NSObject, @preconcurrency ICScannerDeviceDelegate
             fail("selecting functional unit failed: \(error.localizedDescription)")
             return
         }
-        // ICA quirk (per scanline): `functionalUnit` is non-optional in the signature
-        // but sometimes arrives as nil in release builds. unsafeBitCast to Int and
-        // check the address. If nil OR not the unit we want, just return and wait
-        // for the next selection callback — scanner will retry.
-        let address = unsafeBitCast(functionalUnit, to: Int.self)
+        // ICA sometimes delivers a nil-address or wrong-type unit before the real
+        // one; in either case wait for the next callback.
         let wantedType: ICScannerFunctionalUnitType = wantsADF ? .documentFeeder : .flatbed
-        guard address != 0, functionalUnit.type == wantedType else {
-            Log.controller.debug("waiting for correct functional unit (got address=\(address), type=\(functionalUnit.type.rawValue), wanted=\(wantedType.rawValue))")
+        guard !functionalUnit.icaIsReallyNil, functionalUnit.type == wantedType else {
+            Log.controller.debug("waiting for correct functional unit (type=\(functionalUnit.type.rawValue), wanted=\(wantedType.rawValue))")
             return
         }
         configure(functionalUnit: functionalUnit)
@@ -114,11 +107,7 @@ final class ScannerController: NSObject, @preconcurrency ICScannerDeviceDelegate
         pageCounter += 1
         let dest = outDir.appendingPathComponent(String(format: "page_%04d.tiff", pageCounter))
         do {
-            // Move the per-page TIFF from ICA's downloadsDirectory into our outDir
-            // with the page_NNNN.tiff naming the TS side expects.
-            if FileManager.default.fileExists(atPath: dest.path) {
-                try FileManager.default.removeItem(at: dest)
-            }
+            try? FileManager.default.removeItem(at: dest)
             try FileManager.default.moveItem(at: url, to: dest)
             scannedURLs.append(dest)
             if emitEvents {
@@ -162,22 +151,21 @@ final class ScannerController: NSObject, @preconcurrency ICScannerDeviceDelegate
             unit.resolution = maxDPI
         }
 
-        // Color mode
-        switch (params.color_mode ?? "").lowercased() {
-        case "lineart", "bw", "binary", "mono":
+        switch params.color_mode {
+        case .lineart:
             unit.pixelDataType = .BW
             unit.bitDepth = .depth1Bit
-        case "gray", "grayscale":
+        case .gray:
             unit.pixelDataType = .gray
             unit.bitDepth = .depth8Bits
-        default:
+        case .color, .halftone, .none:
             unit.pixelDataType = .RGB
             unit.bitDepth = .depth8Bits
         }
 
         if let feeder = unit as? ICScannerFunctionalUnitDocumentFeeder {
             feeder.documentType = mapDocumentType(params.page_size)
-            feeder.duplexScanningEnabled = (params.duplex ?? false) || (params.source?.lowercased().contains("duplex") ?? false)
+            feeder.duplexScanningEnabled = (params.duplex ?? false) || (params.source?.wantsDuplex ?? false)
         }
 
         if let flatbed = unit as? ICScannerFunctionalUnitFlatbed {
@@ -186,20 +174,19 @@ final class ScannerController: NSObject, @preconcurrency ICScannerDeviceDelegate
             flatbed.scanArea = NSMakeRect(0, 0, physical.width, physical.height)
         }
 
-        // Output settings — ICA writes per-page files into downloadsDirectory using
-        // documentName as the basename. We hand it our outDir and then rename in didScanTo.
+        // ICA writes per-page files into downloadsDirectory; didScanTo renames them.
         scanner.transferMode = .fileBased
         scanner.downloadsDirectory = outDir
         scanner.documentName = "ica_scratch"
-        // Always request TIFF from the scanner; PDF/searchable-PDF synthesis happens post-scan.
+        // PDF/searchable-PDF synthesis happens post-scan; always pull TIFF from the scanner.
         scanner.documentUTI = UTType.tiff.identifier
     }
 
-    private func mapDocumentType(_ pageSize: String?) -> ICScannerDocumentType {
-        switch pageSize?.lowercased() {
-        case "legal": return .typeUSLegal
-        case "a4": return .typeA4
-        case "letter": return .typeUSLetter
+    private func mapDocumentType(_ pageSize: ScanParams.PageSize?) -> ICScannerDocumentType {
+        switch pageSize {
+        case .legal: return .typeUSLegal
+        case .a4: return .typeA4
+        case .letter: return .typeUSLetter
         default: return .typeUSLetter
         }
     }

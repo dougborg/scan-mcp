@@ -56,45 +56,19 @@ struct Scan: @preconcurrency ParsableCommand {
 
         JSONOut.line(ScanEvent.stage("discovering"))
 
-        let browser = ScannerBrowser(
-            targetName: params.device_id,
-            exactMatch: false,
-            browseSeconds: browseSeconds
-        )
-
+        let browser = ScannerBrowser(browseSeconds: browseSeconds)
         var didStart = false
 
-        browser.start(
-            onMatch: { _ in /* match by persistent id below */ },
-            onTimeout: {
-                if !didStart {
-                    JSONOut.line(ScanEvent.error("no scanner found within \(browseSeconds)s"))
-                    CFRunLoopStop(CFRunLoopGetCurrent())
-                }
+        browser.start {
+            if !didStart {
+                JSONOut.line(ScanEvent.error("no scanner found within \(browseSeconds)s"))
+                CFRunLoopStop(CFRunLoopGetCurrent())
             }
-        )
-
-        // Poll for a matching persistentIDString. Browser's name-based match is a fallback;
-        // we prefer matching by ID since the TS side ships persistentIDString.
-        // Timer fires on the main runloop; we do MainActor work inside, then invalidate
-        // the timer from the nonisolated callback if we found our device.
-        let pollTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { timer in
-            let foundDevice: Bool = MainActor.assumeIsolated {
-                let device: ICScannerDevice?
-                if let id = params.device_id {
-                    device = browser.discovered.first { $0.persistentIDString == id || $0.name == id }
-                } else {
-                    device = browser.discovered.first
-                }
-                guard let scanner = device else { return false }
-                browser.stopBrowsing()
-                didStart = true
-                startScan(scanner: scanner, params: params, outDir: outDirURL)
-                return true
-            }
-            if foundDevice { timer.invalidate() }
         }
-        _ = pollTimer
+        browser.waitForDevice(matching: params.device_id) { scanner in
+            didStart = true
+            startScan(scanner: scanner, params: params, outDir: outDirURL)
+        }
         CFRunLoopRun()
     }
 
@@ -115,16 +89,16 @@ struct Scan: @preconcurrency ParsableCommand {
     }
 
     private func emitComplete(pages: [URL], params: ScanParams, outDir: URL) {
-        let outputFormat = params.output_format ?? "tiff"
+        let outputFormat = params.output_format ?? .tiff
         var documentPath: String? = nil
 
-        if outputFormat == "pdf" || outputFormat == "pdf-searchable" {
+        if outputFormat == .pdf || outputFormat == .pdfSearchable {
             JSONOut.line(ScanEvent.stage("finalizing"))
             let pdfURL = outDir.appendingPathComponent("doc_0001.pdf")
             let result = SearchablePDF.assemble(
                 pageTIFFs: pages,
                 outputURL: pdfURL,
-                searchable: outputFormat == "pdf-searchable"
+                searchable: outputFormat == .pdfSearchable
             )
             switch result {
             case .success:
@@ -135,8 +109,7 @@ struct Scan: @preconcurrency ParsableCommand {
         }
 
         JSONOut.line(CompleteEvent(
-            type: "complete",
-            timestamp: ISO8601DateFormatter().string(from: Date()),
+            timestamp: JSONOut.iso8601.string(from: Date()),
             pages: pages.map { $0.path },
             document: documentPath
         ))
@@ -144,7 +117,7 @@ struct Scan: @preconcurrency ParsableCommand {
 }
 
 private struct CompleteEvent: Encodable {
-    let type: String
+    let type = "complete"
     let timestamp: String
     let pages: [String]
     let document: String?

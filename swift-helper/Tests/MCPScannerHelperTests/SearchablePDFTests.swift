@@ -92,20 +92,10 @@ final class SearchablePDFTests: XCTestCase {
         let result = SearchablePDF.assemble(
             pageTIFFs: [tiff],
             outputURL: outURL,
-            searchable: false  // non-searchable variant — verifies basic image-only PDF
+            searchable: false
         )
-
-        switch result {
-        case .success:
-            break
-        case .failure(let err):
-            XCTFail("assemble failed: \(err)")
-            return
-        }
-
-        XCTAssertTrue(FileManager.default.fileExists(atPath: outURL.path))
-        let pdf = PDFDocument(url: outURL)
-        XCTAssertEqual(pdf?.pageCount, 1, "PDF should have exactly one page")
+        XCTAssertNoThrow(try result.get())
+        XCTAssertEqual(PDFDocument(url: outURL)?.pageCount, 1)
     }
 
     func testAssembleMultipage() throws {

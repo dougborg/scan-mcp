@@ -8,21 +8,15 @@ import ImageCaptureCore
 final class ScannerBrowser: NSObject, @preconcurrency ICDeviceBrowserDelegate {
     private let deviceBrowser = ICDeviceBrowser()
     private(set) var discovered: [ICScannerDevice] = []
-    private var targetName: String?
-    private var exactMatch: Bool
-    private var onMatch: ((ICScannerDevice) -> Void)?
     private var onTimeout: (() -> Void)?
     private var timer: Timer?
     private var browseSeconds: TimeInterval
 
-    init(targetName: String? = nil, exactMatch: Bool = false, browseSeconds: TimeInterval = 5.0) {
-        self.targetName = targetName
-        self.exactMatch = exactMatch
+    init(browseSeconds: TimeInterval = 5.0) {
         self.browseSeconds = browseSeconds
         super.init()
         deviceBrowser.delegate = self
-        // Discover scanners over USB (local), Bonjour/AirScan (network), and
-        // macOS-shared devices. Same mask Image Capture uses.
+        // USB (local) + Bonjour/AirScan + macOS-shared — same mask Image Capture uses.
         let mask = ICDeviceTypeMask(rawValue:
             ICDeviceTypeMask.scanner.rawValue |
             ICDeviceLocationTypeMask.local.rawValue |
@@ -32,17 +26,13 @@ final class ScannerBrowser: NSObject, @preconcurrency ICDeviceBrowserDelegate {
         deviceBrowser.browsedDeviceTypeMask = mask
     }
 
-    /// Begin browsing. `onMatch` fires when a device matching targetName is found
-    /// (if targetName was set); otherwise wait until `onTimeout` after browseSeconds.
-    func start(onMatch: @escaping (ICScannerDevice) -> Void, onTimeout: @escaping () -> Void) {
-        self.onMatch = onMatch
+    /// Begin browsing. `onTimeout` fires after `browseSeconds`.
+    func start(onTimeout: @escaping () -> Void) {
         self.onTimeout = onTimeout
         Log.browser.debug("starting (mask=scanner|local|bonjour|shared, window=\(browseSeconds)s)")
         deviceBrowser.start()
         timer = Timer.scheduledTimer(withTimeInterval: browseSeconds, repeats: false) { [weak self] _ in
-            // Timer fires on the main runloop, which IS the main actor; ICA delegates
-            // and our state mutate from here. `assumeIsolated` makes that explicit
-            // to Swift 6 strict concurrency.
+            // Timer fires on the main runloop; `assumeIsolated` tells Swift 6 we're safe.
             MainActor.assumeIsolated {
                 Log.browser.debug("timeout window reached, stopping")
                 self?.stopBrowsing()
@@ -54,22 +44,33 @@ final class ScannerBrowser: NSObject, @preconcurrency ICDeviceBrowserDelegate {
     func stopBrowsing() {
         timer?.invalidate()
         timer = nil
-        // Intentionally NOT calling deviceBrowser.stop(): icdd uses the active
-        // ICDeviceBrowser connection as the per-process "subscription" for
-        // device events (including session-open responses from AirScanScanner).
-        // Stopping the browser unregisters us as a client, and icdd then skips
-        // our PID when distributing the ICADeviceAddedCmd notification — which
-        // means we never receive Endpoint Notified / didOpenSessionWithError.
-        // scanline (the reference impl) follows this same pattern.
+        // Do NOT call deviceBrowser.stop(): icdd treats the active ICDeviceBrowser
+        // connection as our session-event subscription. Stopping unregisters us
+        // and ICADeviceAddedCmd no longer reaches our process.
     }
 
-    private func matches(_ device: ICScannerDevice) -> Bool {
-        guard let target = targetName else { return false }
-        guard let name = device.name else { return false }
-        if exactMatch {
-            return target == name
+    /// Wait for a scanner matching `id` (matched against persistentIDString first,
+    /// then name) to appear in `discovered`, polling every 250ms. Calls `onFound`
+    /// with the match on the main actor and stops browsing. If `id` is nil, takes
+    /// the first discovered scanner.
+    func waitForDevice(matching id: String?, onFound: @escaping @MainActor (ICScannerDevice) -> Void) {
+        let pollTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] timer in
+            let matched: Bool = MainActor.assumeIsolated {
+                guard let self = self else { return true }
+                let device: ICScannerDevice?
+                if let id = id {
+                    device = self.discovered.first { $0.persistentIDString == id || $0.name == id }
+                } else {
+                    device = self.discovered.first
+                }
+                guard let scanner = device else { return false }
+                self.stopBrowsing()
+                onFound(scanner)
+                return true
+            }
+            if matched { timer.invalidate() }
         }
-        return name.lowercased().hasPrefix(target.lowercased())
+        _ = pollTimer
     }
 
     // MARK: - ICDeviceBrowserDelegate
@@ -78,11 +79,6 @@ final class ScannerBrowser: NSObject, @preconcurrency ICDeviceBrowserDelegate {
         guard let scanner = device as? ICScannerDevice else { return }
         Log.browser.debug("added \(scanner.name ?? "[unnamed]") (id=\(scanner.persistentIDString ?? "?"))")
         discovered.append(scanner)
-        if matches(scanner) {
-            Log.browser.debug("match found, stopping early")
-            stopBrowsing()
-            onMatch?(scanner)
-        }
     }
 
     func deviceBrowser(_ browser: ICDeviceBrowser, didRemove device: ICDevice, moreGoing: Bool) {

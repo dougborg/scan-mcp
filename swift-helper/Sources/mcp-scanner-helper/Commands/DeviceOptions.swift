@@ -26,30 +26,16 @@ struct DeviceOptions: @preconcurrency ParsableCommand {
         let browser = ScannerBrowser(browseSeconds: browseSeconds)
         var didMatch = false
 
-        browser.start(
-            onMatch: { _ in /* we filter manually below */ },
-            onTimeout: {
-                if !didMatch {
-                    JSONOut.line(EmptyOptions())
-                    CFRunLoopStop(CFRunLoopGetCurrent())
-                }
+        browser.start {
+            if !didMatch {
+                JSONOut.line(EmptyOptions())
+                CFRunLoopStop(CFRunLoopGetCurrent())
             }
-        )
-
-        // Poll discovered devices via a small repeating timer so we can match on persistentIDString.
-        let pollTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { timer in
-            let found: Bool = MainActor.assumeIsolated {
-                guard let device = browser.discovered.first(where: { $0.persistentIDString == self.deviceId }) else {
-                    return false
-                }
-                didMatch = true
-                browser.stopBrowsing()
-                Self.probe(device: device)
-                return true
-            }
-            if found { timer.invalidate() }
         }
-        _ = pollTimer
+        browser.waitForDevice(matching: deviceId) { device in
+            didMatch = true
+            Self.probe(device: device)
+        }
         CFRunLoopRun()
     }
 
@@ -135,8 +121,7 @@ private final class OptionsProber: NSObject, @preconcurrency ICScannerDeviceDele
         if let error = error {
             fail(error); return
         }
-        let address = unsafeBitCast(functionalUnit, to: Int.self)
-        guard address != 0 else {
+        guard !functionalUnit.icaIsReallyNil else {
             fail(NSError(domain: "mcp-scanner-helper", code: 1, userInfo: [NSLocalizedDescriptionKey: "nil functional unit"]))
             return
         }
@@ -144,24 +129,11 @@ private final class OptionsProber: NSObject, @preconcurrency ICScannerDeviceDele
         var resolutions: [Int] = []
         functionalUnit.supportedResolutions.forEach { resolutions.append($0) }
 
-        var colorModes: [String] = []
-        // ICA reports supported pixel data types via supportedBitDepths / supportedPixelDataTypes
-        // The API is a bit awkward — we describe a reasonable canonical set.
-        let supportedColor: [ICScannerPixelDataType: String] = [
-            .RGB: "Color",
-            .gray: "Gray",
-            .BW: "Lineart",
-        ]
-        for (key, label) in supportedColor {
-            if functionalUnit.supportedBitDepths.count > 0 {
-                colorModes.append(label)
-            }
-            _ = key
-        }
-        // Most modern scanners support all three. If we can't determine, emit a safe default.
-        if colorModes.isEmpty {
-            colorModes = ["Color", "Gray", "Lineart"]
-        }
+        // ICA's per-pixel-type capability API doesn't reliably enumerate which
+        // modes a scanner actually supports — every modern AirScan device
+        // accepts Color/Gray/Lineart, and the per-bit-depth checks we'd
+        // otherwise do produce false positives. Report the canonical set.
+        let colorModes = ["Color", "Gray", "Lineart"]
 
         var adf = partialSources.contains("ADF")
         var duplex = false

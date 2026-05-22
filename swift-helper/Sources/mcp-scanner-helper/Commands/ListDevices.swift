@@ -18,14 +18,11 @@ struct ListDevices: @preconcurrency ParsableCommand {
     func run() throws {
         Log.mirrorToStderr = verbose
         let browser = ScannerBrowser(browseSeconds: browseSeconds)
-        browser.start(
-            onMatch: { _ in /* unused; we wait for the full window */ },
-            onTimeout: {
-                let devices = browser.discovered.map(Self.toJSON)
-                JSONOut.line(DevicesResponse(devices: devices))
-                CFRunLoopStop(CFRunLoopGetCurrent())
-            }
-        )
+        browser.start {
+            let devices = browser.discovered.map(Self.toJSON)
+            JSONOut.line(DevicesResponse(devices: devices))
+            CFRunLoopStop(CFRunLoopGetCurrent())
+        }
         CFRunLoopRun()
     }
 

@@ -13,6 +13,10 @@ enum JSONOut {
         return e
     }()
 
+    /// Shared formatter — instantiation cost is non-trivial. ISO8601DateFormatter
+    /// is documented thread-safe for reads, so `nonisolated(unsafe)` is sound here.
+    nonisolated(unsafe) static let iso8601 = ISO8601DateFormatter()
+
     /// Print a JSON object as a single line on stdout.
     static func line<T: Encodable>(_ value: T) {
         guard let data = try? encoder.encode(value) else { return }
@@ -51,7 +55,7 @@ struct ScanEvent: Encodable {
         data: [String: AnyEncodable]? = nil
     ) {
         self.type = type
-        self.timestamp = ISO8601DateFormatter().string(from: Date())
+        self.timestamp = JSONOut.iso8601.string(from: Date())
         self.stage = stage
         self.index = index
         self.path = path

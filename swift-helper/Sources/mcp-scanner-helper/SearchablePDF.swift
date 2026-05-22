@@ -12,23 +12,19 @@ enum SearchablePDF {
 
     static func assemble(pageTIFFs: [URL], outputURL: URL, searchable: Bool) -> Result<Void, Error> {
         guard !pageTIFFs.isEmpty else {
-            return .failure(NSError(domain: "SearchablePDF", code: 1, userInfo: [NSLocalizedDescriptionKey: "no pages to assemble"]))
+            return .failure(error("no pages to assemble"))
         }
 
         let mutableData = CFDataCreateMutable(nil, 0)!
         guard let consumer = CGDataConsumer(data: mutableData) else {
-            return .failure(NSError(domain: "SearchablePDF", code: 2, userInfo: [NSLocalizedDescriptionKey: "could not create PDF data consumer"]))
+            return .failure(error("could not create PDF data consumer"))
         }
 
-        // Use the first page's dimensions as the initial mediaBox; we re-set it per page
-        // because pages may differ (mixed flatbed/ADF in theory).
-        guard let firstSize = pageSizeInPoints(of: pageTIFFs[0]) else {
-            return .failure(NSError(domain: "SearchablePDF", code: 3, userInfo: [NSLocalizedDescriptionKey: "could not read first page size"]))
-        }
-        var initialMediaBox = CGRect(origin: .zero, size: firstSize)
-
+        // `mediaBox` here is just the default; beginPage(mediaBox:) overrides it
+        // per page. Any non-zero rect works.
+        var initialMediaBox = CGRect(x: 0, y: 0, width: 612, height: 792)
         guard let pdfContext = CGContext(consumer: consumer, mediaBox: &initialMediaBox, nil) else {
-            return .failure(NSError(domain: "SearchablePDF", code: 4, userInfo: [NSLocalizedDescriptionKey: "could not create CGPDFContext"]))
+            return .failure(error("could not create CGPDFContext"))
         }
 
         for tiffURL in pageTIFFs {
@@ -60,6 +56,10 @@ enum SearchablePDF {
         }
     }
 
+    private static func error(_ message: String) -> NSError {
+        NSError(domain: "SearchablePDF", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
+    }
+
     // MARK: - Image loading
 
     private static func loadImageAndSize(at url: URL) -> (CGImage, CGSize)? {
@@ -67,12 +67,6 @@ enum SearchablePDF {
         guard let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
         let size = pageSizeInPoints(source: source, image: cgImage) ?? CGSize(width: cgImage.width, height: cgImage.height)
         return (cgImage, size)
-    }
-
-    private static func pageSizeInPoints(of url: URL) -> CGSize? {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
-        guard let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
-        return pageSizeInPoints(source: source, image: cgImage)
     }
 
     private static func pageSizeInPoints(source: CGImageSource, image: CGImage) -> CGSize? {
@@ -115,31 +109,18 @@ enum SearchablePDF {
         }
     }
 
-    /// Draw one line of invisible-but-extractable text. We use CTLineDraw rather than
-    /// CTFrameDraw because we want strict control over the text matrix — and we must
-    /// re-set `setTextDrawingMode(.invisible)` *per line*, since Core Text's runs
-    /// re-stamp the text mode based on the attributed string's attributes. Earlier
-    /// attempts to set it once at the top of the function were silently overridden.
-    ///
-    /// Result: glyphs go into the PDF content stream as `Tj` operators preceded by
-    /// `3 Tr` (text rendering mode = invisible), which PDFKit's text-extraction layer
-    /// picks up. The visual rendering shows nothing.
+    /// Draw one line of invisible-but-extractable text. `setTextDrawingMode(.invisible)`
+    /// must be re-set inside saveGState per line — Core Text's runs re-stamp the text
+    /// mode from the attributed string's attributes, so a single set at the top of
+    /// the caller is silently overridden.
     private static func drawInvisibleLine(text: String, in rect: CGRect, into pdfContext: CGContext) {
-        // Heuristic font size — CTLine isn't going to wrap, so this only affects how the
-        // glyph positions appear in the PDF (invisible to the eye either way).
         let fontSize = max(4.0, min(72.0, rect.height * 0.85))
         let font = CTFontCreateWithName("Helvetica" as CFString, fontSize, nil)
-        let attrString = NSAttributedString(string: text, attributes: [
-            .font: font,
-            // No alpha-0 trick: that was being interpreted as "this text shouldn't be
-            // searchable either." setTextDrawingMode(.invisible) on the CGContext is
-            // the right knob for "invisible but extractable."
-        ])
+        let attrString = NSAttributedString(string: text, attributes: [.font: font])
         let line = CTLineCreateWithAttributedString(attrString)
 
         pdfContext.saveGState()
         pdfContext.setTextDrawingMode(.invisible)
-        // Position the text baseline at the bottom of the bbox.
         pdfContext.textMatrix = .identity
         pdfContext.textPosition = CGPoint(x: rect.minX, y: rect.minY)
         CTLineDraw(line, pdfContext)

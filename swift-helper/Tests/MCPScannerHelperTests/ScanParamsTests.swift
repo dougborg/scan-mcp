@@ -30,13 +30,13 @@ final class ScanParamsTests: XCTestCase {
         let params = try JSONDecoder().decode(ScanParams.self, from: Data(json.utf8))
         XCTAssertEqual(params.device_id, "ABC-123")
         XCTAssertEqual(params.resolution_dpi, 300)
-        XCTAssertEqual(params.color_mode, "Color")
-        XCTAssertEqual(params.source, "ADF Duplex")
+        XCTAssertEqual(params.color_mode, .color)
+        XCTAssertEqual(params.source, .adfDuplex)
         XCTAssertEqual(params.duplex, true)
-        XCTAssertEqual(params.page_size, "Letter")
+        XCTAssertEqual(params.page_size, .letter)
         XCTAssertEqual(params.custom_size_mm?.width, 210.0)
         XCTAssertEqual(params.custom_size_mm?.height, 297.0)
-        XCTAssertEqual(params.output_format, "pdf-searchable")
+        XCTAssertEqual(params.output_format, .pdfSearchable)
         XCTAssertEqual(params.ocr, true)
         XCTAssertEqual(params.autoname, false)
         XCTAssertEqual(params.summarize, true)
@@ -46,8 +46,8 @@ final class ScanParamsTests: XCTestCase {
         var original = ScanParams()
         original.device_id = "round-trip"
         original.resolution_dpi = 600
-        original.source = "ADF"
-        original.output_format = "pdf"
+        original.source = .adf
+        original.output_format = .pdf
 
         let encoded = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(ScanParams.self, from: encoded)
@@ -56,6 +56,14 @@ final class ScanParamsTests: XCTestCase {
         XCTAssertEqual(decoded.resolution_dpi, original.resolution_dpi)
         XCTAssertEqual(decoded.source, original.source)
         XCTAssertEqual(decoded.output_format, original.output_format)
+    }
+
+    func testSourceConvenienceFlags() {
+        XCTAssertTrue(ScanParams.Source.adf.wantsADF)
+        XCTAssertTrue(ScanParams.Source.adfDuplex.wantsADF)
+        XCTAssertFalse(ScanParams.Source.flatbed.wantsADF)
+        XCTAssertTrue(ScanParams.Source.adfDuplex.wantsDuplex)
+        XCTAssertFalse(ScanParams.Source.adf.wantsDuplex)
     }
 
     func testIgnoresUnknownFields() throws {
