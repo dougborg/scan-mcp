@@ -42,13 +42,7 @@ export class IcaBackend implements Backend {
         ["device-options", "--device-id", deviceId, "--browse-seconds", "5"],
         { shell: false, timeout: 30_000 }
       );
-      const parsed = parseJSON<{
-        sources?: string[];
-        color_modes?: string[];
-        resolutions?: number[];
-        adf?: boolean;
-        duplex?: boolean;
-      }>(stdout);
+      const parsed = parseJSON<DeviceOptions>(stdout);
       return parsed ?? {};
     } catch (err) {
       logger.error({ err, deviceId }, "ica: device-options failed");

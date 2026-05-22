@@ -64,12 +64,31 @@ struct OptionsJSON: Encodable {
     let resolutions: [Int]
     let adf: Bool
     let duplex: Bool
+    /// Per-source capabilities (keyed by source name: "Flatbed", "ADF", "ADF Duplex").
+    /// Source/resolution/color combos can differ per functional unit on multifunction
+    /// scanners — flatbed might support 600 dpi while the ADF only goes to 300.
+    let per_source: [String: SourceCaps]
+
+    struct SourceCaps: Encodable {
+        let resolutions: [Int]
+        let color_modes: [String]
+    }
 }
 
 @MainActor
 private final class OptionsProber: NSObject, @preconcurrency ICScannerDeviceDelegate {
+    /// Modern AirScan/eSCL doesn't expose per-pixel-type support in a reliable way;
+    /// every device we see accepts these three. Hardcoded across all units.
+    private static let canonicalColorModes = ["Color", "Gray", "Lineart"]
+
     let scanner: ICScannerDevice
     private var onComplete: ((Result<OptionsJSON, Error>) -> Void)?
+
+    // State machine state — built up across multiple didSelect callbacks.
+    private var unitsToProbe: [ICScannerFunctionalUnitType] = []
+    private var currentTarget: ICScannerFunctionalUnitType?
+    private var perUnitCaps: [ICScannerFunctionalUnitType: OptionsJSON.SourceCaps] = [:]
+    private var hasDuplex = false
 
     init(scanner: ICScannerDevice) {
         self.scanner = scanner
@@ -92,70 +111,91 @@ private final class OptionsProber: NSObject, @preconcurrency ICScannerDeviceDele
 
     func deviceDidBecomeReady(_ device: ICDevice) {
         Log.prober.debug("deviceDidBecomeReady, availableFunctionalUnitTypes=\(scanner.availableFunctionalUnitTypes)")
-        // Examine functional units to enumerate sources, resolutions, color modes.
-        var sources: [String] = []
-        let units = scanner.availableFunctionalUnitTypes
-        for unitNum in units {
-            switch ICScannerFunctionalUnitType(rawValue: UInt(truncating: unitNum)) {
-            case .documentFeeder?:
-                sources.append("ADF")
-            case .flatbed?:
-                sources.append("Flatbed")
-            default:
-                break
-            }
-        }
-
-        // Default to selecting the most capable unit to read resolution/color details.
-        let preferred: ICScannerFunctionalUnitType = sources.contains("ADF") ? .documentFeeder : .flatbed
-        scanner.requestSelect(preferred)
-
-        // Note: requestSelect is async; the rest of enumeration happens in didSelect below.
-        // Stash the source list so didSelect can finalize.
-        self.partialSources = sources
+        unitsToProbe = scanner.availableFunctionalUnitTypes
+            .compactMap { ICScannerFunctionalUnitType(rawValue: UInt(truncating: $0)) }
+            .filter { Self.sourceName(for: $0) != nil }
+        probeNextUnit()
     }
 
-    private var partialSources: [String] = []
+    private func probeNextUnit() {
+        guard let next = unitsToProbe.first else {
+            finish()
+            return
+        }
+        currentTarget = next
+        Log.prober.debug("probing functional unit type=\(next.rawValue)")
+        scanner.requestSelect(next)
+    }
 
     func scannerDevice(_ scanner: ICScannerDevice, didSelect functionalUnit: ICScannerFunctionalUnit, error: Error?) {
         if let error = error {
             fail(error); return
         }
-        guard !functionalUnit.icaIsReallyNil else {
-            fail(NSError(domain: "mcp-scanner-helper", code: 1, userInfo: [NSLocalizedDescriptionKey: "nil functional unit"]))
+        // ICA quirk — wait for the real callback.
+        guard !functionalUnit.icaIsReallyNil, functionalUnit.type == currentTarget else {
+            Log.prober.debug("waiting for correct unit (got nil=\(functionalUnit.icaIsReallyNil), type=\(functionalUnit.type.rawValue), wanted=\(currentTarget?.rawValue ?? 0))")
             return
         }
 
-        var resolutions: [Int] = []
-        functionalUnit.supportedResolutions.forEach { resolutions.append($0) }
-
-        // ICA's per-pixel-type capability API doesn't reliably enumerate which
-        // modes a scanner actually supports — every modern AirScan device
-        // accepts Color/Gray/Lineart, and the per-bit-depth checks we'd
-        // otherwise do produce false positives. Report the canonical set.
-        let colorModes = ["Color", "Gray", "Lineart"]
-
-        var adf = partialSources.contains("ADF")
-        var duplex = false
-        if let feeder = functionalUnit as? ICScannerFunctionalUnitDocumentFeeder {
-            duplex = feeder.supportsDuplexScanning
-            adf = true
-            if duplex && !partialSources.contains("ADF Duplex") {
-                partialSources.append("ADF Duplex")
-            }
-        }
-
-        let opts = OptionsJSON(
-            sources: partialSources,
-            color_modes: colorModes,
-            resolutions: resolutions.sorted(),
-            adf: adf,
-            duplex: duplex
+        let resolutions = functionalUnit.supportedResolutions.map { $0 }.sorted()
+        perUnitCaps[functionalUnit.type] = OptionsJSON.SourceCaps(
+            resolutions: resolutions,
+            color_modes: Self.canonicalColorModes
         )
 
-        let cb = onComplete
-        onComplete = nil
-        cb?(.success(opts))
+        if let feeder = functionalUnit as? ICScannerFunctionalUnitDocumentFeeder, feeder.supportsDuplexScanning {
+            hasDuplex = true
+        }
+
+        unitsToProbe.removeFirst()
+        currentTarget = nil
+        probeNextUnit()
+    }
+
+    private func finish() {
+        var sources = perUnitCaps.keys.compactMap(Self.sourceName(for:))
+        // Stable order: Flatbed before ADF before ADF Duplex.
+        sources.sort { Self.sourceOrder($0) < Self.sourceOrder($1) }
+
+        var perSource = Dictionary(uniqueKeysWithValues: perUnitCaps.compactMap { (type, caps) -> (String, OptionsJSON.SourceCaps)? in
+            guard let name = Self.sourceName(for: type) else { return nil }
+            return (name, caps)
+        })
+
+        // ADF Duplex shares ADF's caps — same physical scan path, just both sides.
+        if hasDuplex, let adfCaps = perSource["ADF"] {
+            sources.append("ADF Duplex")
+            perSource["ADF Duplex"] = adfCaps
+        }
+
+        // Union for backward compatibility with consumers that don't look at per_source.
+        let unionResolutions = Array(Set(perUnitCaps.values.flatMap(\.resolutions))).sorted()
+
+        succeed(OptionsJSON(
+            sources: sources,
+            color_modes: Self.canonicalColorModes,
+            resolutions: unionResolutions,
+            adf: sources.contains("ADF"),
+            duplex: hasDuplex,
+            per_source: perSource
+        ))
+    }
+
+    private static func sourceName(for type: ICScannerFunctionalUnitType) -> String? {
+        switch type {
+        case .documentFeeder: return "ADF"
+        case .flatbed: return "Flatbed"
+        default: return nil
+        }
+    }
+
+    private static func sourceOrder(_ name: String) -> Int {
+        switch name {
+        case "Flatbed": return 0
+        case "ADF": return 1
+        case "ADF Duplex": return 2
+        default: return 99
+        }
     }
 
     func device(_ device: ICDevice, didEncounterError error: Error?) {
@@ -168,6 +208,12 @@ private final class OptionsProber: NSObject, @preconcurrency ICScannerDeviceDele
     func didRemove(_ device: ICDevice) {}
     func scannerDevice(_ scanner: ICScannerDevice, didScanTo url: URL) {}
     func scannerDevice(_ scanner: ICScannerDevice, didCompleteScanWithError error: Error?) {}
+
+    private func succeed(_ opts: OptionsJSON) {
+        let cb = onComplete
+        onComplete = nil
+        cb?(.success(opts))
+    }
 
     private func fail(_ error: Error) {
         let cb = onComplete

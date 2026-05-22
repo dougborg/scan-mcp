@@ -107,6 +107,42 @@ describe("resolveEffectiveInput", () => {
     const eff = await resolveEffectiveInput({ device_id: "dev" }, ctx);
     expect(eff.resolution_dpi).toBe(300);
   });
+
+  it("prefers per_source resolutions when the source is known", async () => {
+    // Flatbed supports 600, ADF only goes to 300. With source=ADF, picking 600
+    // would be wrong; we should pick from the ADF-specific list.
+    const backend: Backend = {
+      name: "mock",
+      listDevices: vi.fn(async () => [{ id: "dev" }]),
+      getDeviceOptions: vi.fn(async () => ({
+        sources: ["Flatbed", "ADF"],
+        resolutions: [100, 200, 300, 600], // union
+        per_source: {
+          Flatbed: { resolutions: [100, 200, 300, 600] },
+          ADF: { resolutions: [200, 300] },
+        },
+      })),
+      runScan: vi.fn(async () => ({ ran: true })),
+      // No probeResolution: forces per_source-driven fallback path.
+    };
+    const ctx: AppContext = { config, logger, backend };
+    const eff = await resolveEffectiveInput({ device_id: "dev", source: "ADF" }, ctx);
+    expect(eff.resolution_dpi).toBe(300);
+  });
+
+  it("falls back to union resolutions when per_source has no entry for the source", async () => {
+    const backend = makeBackend({
+      getDeviceOptions: async () => ({
+        sources: ["Flatbed"],
+        resolutions: [200, 600],
+        per_source: { Flatbed: { resolutions: [200, 600] } },
+      }),
+    });
+    const ctx: AppContext = { config, logger, backend };
+    // source not yet set → falls through to union lookup
+    const eff = await resolveEffectiveInput({ device_id: "dev" }, ctx);
+    expect(eff.resolution_dpi).toBe(300); // probeResolution from MockBackend wins
+  });
 });
 
 describe("last-used device persistence (mock)", () => {

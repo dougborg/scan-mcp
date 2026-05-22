@@ -5,8 +5,8 @@ import XCTest
 /// the shape so changes are intentional, not accidental.
 final class JSONEventsTests: XCTestCase {
 
-    private func decode(_ event: ScanEvent) throws -> [String: Any] {
-        let data = try JSONEncoder().encode(event)
+    private func decode<T: Encodable>(_ value: T) throws -> [String: Any] {
+        let data = try JSONEncoder().encode(value)
         return try (JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
     }
 

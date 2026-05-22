@@ -306,34 +306,35 @@ export async function resolveEffectiveInput(input: StartScanInput, ctx: AppConte
         out.source = "ADF Duplex";
       }
       if (!out.resolution_dpi) {
+        // Prefer the per-source resolution list when available (multifunction
+        // scanners can have different supported sets per functional unit).
+        const sourceCaps = out.source ? opts.per_source?.[out.source] : undefined;
+        const candidateResolutions = sourceCaps?.resolutions ?? opts.resolutions;
         const probedOk =
           backend.probeResolution &&
           out.device_id &&
           (await backend.probeResolution(out.device_id, DEFAULT_RESOLUTION_DPI, ctx));
         if (probedOk) {
           out.resolution_dpi = DEFAULT_RESOLUTION_DPI;
-        } else if (opts.resolutions && opts.resolutions.length) {
-          if (opts.resolutions.includes(DEFAULT_RESOLUTION_DPI)) {
+        } else if (candidateResolutions && candidateResolutions.length) {
+          if (candidateResolutions.includes(DEFAULT_RESOLUTION_DPI)) {
             out.resolution_dpi = DEFAULT_RESOLUTION_DPI;
           } else {
-            const sorted = [...opts.resolutions].sort((a, b) => a - b);
+            const sorted = [...candidateResolutions].sort((a, b) => a - b);
             const le = sorted.filter((n) => n <= DEFAULT_RESOLUTION_DPI);
-            if (le.length > 0) {
-              out.resolution_dpi = le[le.length - 1];
-            } else {
-              out.resolution_dpi = sorted[0];
-            }
+            out.resolution_dpi = le.length > 0 ? le[le.length - 1] : sorted[0];
           }
         }
       }
-      if (opts.color_modes && opts.color_modes.length) {
-        const available = opts.color_modes;
+      const sourceColorModes = out.source ? opts.per_source?.[out.source]?.color_modes : undefined;
+      const availableColorModes = sourceColorModes ?? opts.color_modes;
+      if (availableColorModes && availableColorModes.length) {
         if (out.color_mode) {
-          const match = available.find((m) => m.toLowerCase() === String(out.color_mode).toLowerCase());
+          const match = availableColorModes.find((m) => m.toLowerCase() === String(out.color_mode).toLowerCase());
           if (match) out.color_mode = match;
         } else {
           const pref = ["Lineart", "Gray", "Halftone", "Color"];
-          const selected = pref.find((p) => available.some((m) => m.toLowerCase() === p.toLowerCase())) ?? available[0];
+          const selected = pref.find((p) => availableColorModes.some((m) => m.toLowerCase() === p.toLowerCase())) ?? availableColorModes[0];
           out.color_mode = selected;
         }
       }

@@ -20,6 +20,10 @@ export type DeviceOptions = {
   resolutions?: number[];
   adf?: boolean;
   duplex?: boolean;
+  /** Per-source caps. ICA backend populates this when a multifunction scanner
+   * has distinct resolution/color sets per functional unit (flatbed vs ADF).
+   * Keyed by source name ("Flatbed", "ADF", "ADF Duplex"). */
+  per_source?: Record<string, { resolutions?: number[]; color_modes?: string[] }>;
 };
 
 export type StartScanInput = {
