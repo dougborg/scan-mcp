@@ -88,6 +88,24 @@ final class CLITests: XCTestCase {
         XCTAssertTrue(result.stdout.contains("scan"))
         XCTAssertTrue(result.stdout.contains("device-options"))
         XCTAssertTrue(result.stdout.contains("capabilities"))
+        XCTAssertTrue(result.stdout.contains("assemble-pdf"))
+    }
+
+    func testAssemblePdfHelpListsArgs() throws {
+        let result = try run(args: ["assemble-pdf", "--help"])
+        XCTAssertEqual(result.exitCode, 0, "stderr: \(result.stderr)")
+        XCTAssertTrue(result.stdout.contains("--output"))
+        XCTAssertTrue(result.stdout.contains("--searchable"))
+    }
+
+    func testAssemblePdfErrorsWithNoPages() throws {
+        let outPath = NSTemporaryDirectory() + "test-empty-\(UUID().uuidString).pdf"
+        let result = try run(args: ["assemble-pdf", "--output", outPath])
+        XCTAssertNotEqual(result.exitCode, 0, "should exit non-zero when no pages supplied")
+        XCTAssertTrue(result.stderr.contains("at least one page"),
+                      "stderr: \(result.stderr)")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outPath),
+                       "no PDF should be written when input is invalid")
     }
 
     func testVersionFlag() throws {

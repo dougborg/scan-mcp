@@ -10,6 +10,7 @@ struct MCPScannerHelper: ParsableCommand {
             DeviceOptions.self,
             Capabilities.self,
             Scan.self,
+            AssemblePDF.self,
         ]
     )
 }
