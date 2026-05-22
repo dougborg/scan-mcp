@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+        scanline carries `com.apple.application-identifier` (auto-attached by
+        Xcode at sign time via the provisioning profile machinery). Empirically,
+        without this entitlement, ICA's per-device modules (e.g., AirScanScanner.app)
+        silently drop our session-open requests — no error callback ever fires.
+        Adding the entitlement matches scanline's binary and unblocks the
+        delegate flow. Format is <TEAM_ID>.<BUNDLE_ID>.
+    -->
+    <key>com.apple.application-identifier</key>
+    <string>AN7VQUD6ZL.org.dougborg.mcp-scanner-helper</string>
+</dict>
+</plist>

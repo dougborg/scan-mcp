@@ -89,17 +89,15 @@ final class ScannerController: NSObject, ICScannerDeviceDelegate {
             fail("selecting functional unit failed: \(error.localizedDescription)")
             return
         }
-        // Workaround for an old ICA quirk: `functionalUnit` is non-optional in signature
-        // but can come back as nil in release builds. Check the address rather than nil.
+        // ICA quirk (per scanline): `functionalUnit` is non-optional in the signature
+        // but sometimes arrives as nil in release builds. unsafeBitCast to Int and
+        // check the address. If nil OR not the unit we want, just return and wait
+        // for the next selection callback — scanner will retry.
         let address = unsafeBitCast(functionalUnit, to: Int.self)
-        guard address != 0 else {
-            fail("scanner returned nil functional unit")
-            return
-        }
         let wantedType: ICScannerFunctionalUnitType = wantsADF ? .documentFeeder : .flatbed
-        if functionalUnit.type != wantedType {
-            // Different unit type than requested — the scanner picked another. Continue anyway.
-            JSONOut.diagnostic("warning: scanner selected \(functionalUnit.type) instead of \(wantedType)")
+        guard address != 0, functionalUnit.type == wantedType else {
+            Log.controller.debug("waiting for correct functional unit (got address=\(address), type=\(functionalUnit.type.rawValue), wanted=\(wantedType.rawValue))")
+            return
         }
         configure(functionalUnit: functionalUnit)
         if emitEvents {

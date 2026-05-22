@@ -48,7 +48,13 @@ final class ScannerBrowser: NSObject, ICDeviceBrowserDelegate {
     func stopBrowsing() {
         timer?.invalidate()
         timer = nil
-        deviceBrowser.stop()
+        // Intentionally NOT calling deviceBrowser.stop(): icdd uses the active
+        // ICDeviceBrowser connection as the per-process "subscription" for
+        // device events (including session-open responses from AirScanScanner).
+        // Stopping the browser unregisters us as a client, and icdd then skips
+        // our PID when distributing the ICADeviceAddedCmd notification — which
+        // means we never receive Endpoint Notified / didOpenSessionWithError.
+        // scanline (the reference impl) follows this same pattern.
     }
 
     private func matches(_ device: ICScannerDevice) -> Bool {

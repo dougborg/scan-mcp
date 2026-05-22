@@ -24,3 +24,6 @@ scanned_documents/
 # Local Files
 .env
 
+# Diagnostic logs from the icdd debugging session — never commit
+log.log
+scanline-vs-us.log

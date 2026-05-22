@@ -39,23 +39,32 @@ chmod +x "$ROOT/dist/bin/mcp-scanner-helper"
 
 OUT="$ROOT/dist/bin/mcp-scanner-helper"
 
+ENTITLEMENTS="$ROOT/swift-helper/mcp-scanner-helper.entitlements"
+if [[ ! -f "$ENTITLEMENTS" ]]; then
+  echo "build:helper: WARNING — entitlements file missing at $ENTITLEMENTS" >&2
+fi
+
 if [[ -n "${DEVELOPER_ID_APPLICATION:-}" ]]; then
   echo "build:helper: codesigning with $DEVELOPER_ID_APPLICATION"
   codesign --force --options=runtime --timestamp \
+    --entitlements "$ENTITLEMENTS" \
     --sign "$DEVELOPER_ID_APPLICATION" "$OUT"
 else
   # Ad-hoc signing (identity "-") gives the binary a stable signature without a
-  # Developer ID cert. macOS uses this signature as the identity for TCC
-  # permission grants — without it, a binary that uses NSLocalNetworkUsageDescription
-  # will be silently denied because there's nothing for the system to remember
-  # the user's "Allow" decision against.
-  echo "build:helper: DEVELOPER_ID_APPLICATION not set; ad-hoc signing for TCC compatibility"
-  codesign --force --options=runtime --sign - "$OUT"
+  # Developer ID cert. ICA's per-device modules (e.g., AirScanScanner.app)
+  # silently drop session-open requests unless we declare
+  # com.apple.application-identifier — so we sign with the same entitlements
+  # in dev mode too, even though the application-identifier won't be honored
+  # by Apple's servers without a proper Developer ID + provisioning profile.
+  echo "build:helper: DEVELOPER_ID_APPLICATION not set; ad-hoc signing (ICA will likely fail)"
+  codesign --force --options=runtime \
+    --entitlements "$ENTITLEMENTS" \
+    --sign - "$OUT"
 fi
 
 if [[ -n "${NOTARY_PROFILE:-}" && -n "${DEVELOPER_ID_APPLICATION:-}" ]]; then
   echo "build:helper: notarizing via $NOTARY_PROFILE (this may take 1-5 minutes)"
-  ZIP_PATH="$(mktemp -t mcp-scanner-helper).zip"
+  ZIP_PATH="/tmp/mcp-scanner-helper-notarize-$$.zip"
   trap 'rm -f "$ZIP_PATH"' EXIT
   /usr/bin/ditto -c -k --keepParent "$OUT" "$ZIP_PATH"
   xcrun notarytool submit "$ZIP_PATH" --keychain-profile "$NOTARY_PROFILE" --wait

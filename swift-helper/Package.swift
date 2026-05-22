@@ -1,9 +1,12 @@
-// swift-tools-version: 5.9
+// swift-tools-version: 6.0
 import PackageDescription
 
 let package = Package(
     name: "mcp-scanner-helper",
-    platforms: [.macOS(.v13)],
+    // scanline targets minos 15.0 and works; we hung at 13.0. icdd appears to
+    // route session-open through a different code path based on the client's
+    // LC_BUILD_VERSION min-OS. Bumping to v15 to match scanline.
+    platforms: [.macOS(.v15)],
     products: [
         .executable(name: "mcp-scanner-helper", targets: ["mcp-scanner-helper"]),
     ],
@@ -17,17 +20,18 @@ let package = Package(
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/mcp-scanner-helper",
-            linkerSettings: [
-                // Embed Info.plist into the binary's __TEXT,__info_plist section.
-                // macOS reads this for Bonjour service declarations and the
-                // NSLocalNetworkUsageDescription required by Sonoma+ TCC.
-                .unsafeFlags([
-                    "-Xlinker", "-sectcreate",
-                    "-Xlinker", "__TEXT",
-                    "-Xlinker", "__info_plist",
-                    "-Xlinker", "Resources/Info.plist",
-                ]),
+            swiftSettings: [
+                // Swift 5 language mode: ImageCaptureCore's @objc delegate
+                // protocols (ICScannerDeviceDelegate etc.) are NOT
+                // main-actor-isolated in Apple's headers, so @MainActor on our
+                // conforming classes triggers conformance-isolation errors in
+                // Swift 6 strict mode. Tested — that wasn't the icdd gate either.
+                .swiftLanguageMode(.v5),
             ]
+            // Intentionally no Info.plist embed: matching scanline's structure
+            // exactly. With minos=15.0, icdd lets us in, but LaunchServices
+            // returns different application metadata depending on whether
+            // CFBundle* keys are present. scanline has none; we mirror.
         ),
         .testTarget(
             name: "MCPScannerHelperTests",
