@@ -4,10 +4,12 @@ import ImageCaptureCore
 
 // Keeps the controller alive while CFRunLoop runs. ICScannerDevice.delegate is
 // weak, so a local-scoped controller would be deallocated before any callbacks
-// fire — silent hang.
-private var activeScanController: ScannerController?
+// fire — silent hang. The process is single-threaded under CFRunLoopRun, so
+// nonisolated(unsafe) is sound here.
+nonisolated(unsafe) private var activeScanController: ScannerController?
 
-struct Scan: ParsableCommand {
+@MainActor
+struct Scan: @preconcurrency ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "scan",
         abstract: "Drive a scanner to capture pages into an output directory.",
@@ -74,19 +76,23 @@ struct Scan: ParsableCommand {
 
         // Poll for a matching persistentIDString. Browser's name-based match is a fallback;
         // we prefer matching by ID since the TS side ships persistentIDString.
+        // Timer fires on the main runloop; we do MainActor work inside, then invalidate
+        // the timer from the nonisolated callback if we found our device.
         let pollTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { timer in
-            let device: ICScannerDevice?
-            if let id = params.device_id {
-                device = browser.discovered.first { $0.persistentIDString == id || $0.name == id }
-            } else {
-                // No device specified — take the first discovered scanner.
-                device = browser.discovered.first
+            let foundDevice: Bool = MainActor.assumeIsolated {
+                let device: ICScannerDevice?
+                if let id = params.device_id {
+                    device = browser.discovered.first { $0.persistentIDString == id || $0.name == id }
+                } else {
+                    device = browser.discovered.first
+                }
+                guard let scanner = device else { return false }
+                browser.stopBrowsing()
+                didStart = true
+                startScan(scanner: scanner, params: params, outDir: outDirURL)
+                return true
             }
-            guard let scanner = device else { return }
-            timer.invalidate()
-            browser.stopBrowsing()
-            didStart = true
-            startScan(scanner: scanner, params: params, outDir: outDirURL)
+            if foundDevice { timer.invalidate() }
         }
         _ = pollTimer
         CFRunLoopRun()

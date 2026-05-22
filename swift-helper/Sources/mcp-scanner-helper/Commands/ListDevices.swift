@@ -2,7 +2,8 @@ import ArgumentParser
 import Foundation
 import ImageCaptureCore
 
-struct ListDevices: ParsableCommand {
+@MainActor
+struct ListDevices: @preconcurrency ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "list-devices",
         abstract: "Discover connected scanners (USB, AirScan / Bonjour, macOS-shared)."

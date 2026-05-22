@@ -3,9 +3,10 @@ import Foundation
 import ImageCaptureCore
 
 // See Scan.swift — same pattern, ICA delegates are weak.
-private var activeProber: AnyObject?
+nonisolated(unsafe) private var activeProber: AnyObject?
 
-struct DeviceOptions: ParsableCommand {
+@MainActor
+struct DeviceOptions: @preconcurrency ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "device-options",
         abstract: "Open a session with a scanner and report its supported sources, resolutions, and color modes."
@@ -37,13 +38,16 @@ struct DeviceOptions: ParsableCommand {
 
         // Poll discovered devices via a small repeating timer so we can match on persistentIDString.
         let pollTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { timer in
-            guard let device = browser.discovered.first(where: { $0.persistentIDString == self.deviceId }) else {
-                return
+            let found: Bool = MainActor.assumeIsolated {
+                guard let device = browser.discovered.first(where: { $0.persistentIDString == self.deviceId }) else {
+                    return false
+                }
+                didMatch = true
+                browser.stopBrowsing()
+                Self.probe(device: device)
+                return true
             }
-            timer.invalidate()
-            didMatch = true
-            browser.stopBrowsing()
-            Self.probe(device: device)
+            if found { timer.invalidate() }
         }
         _ = pollTimer
         CFRunLoopRun()
@@ -76,7 +80,8 @@ struct OptionsJSON: Encodable {
     let duplex: Bool
 }
 
-private final class OptionsProber: NSObject, ICScannerDeviceDelegate {
+@MainActor
+private final class OptionsProber: NSObject, @preconcurrency ICScannerDeviceDelegate {
     let scanner: ICScannerDevice
     private var onComplete: ((Result<OptionsJSON, Error>) -> Void)?
 

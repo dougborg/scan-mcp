@@ -4,7 +4,8 @@
 import Foundation
 import ImageCaptureCore
 
-final class ScannerBrowser: NSObject, ICDeviceBrowserDelegate {
+@MainActor
+final class ScannerBrowser: NSObject, @preconcurrency ICDeviceBrowserDelegate {
     private let deviceBrowser = ICDeviceBrowser()
     private(set) var discovered: [ICScannerDevice] = []
     private var targetName: String?
@@ -39,9 +40,14 @@ final class ScannerBrowser: NSObject, ICDeviceBrowserDelegate {
         Log.browser.debug("starting (mask=scanner|local|bonjour|shared, window=\(browseSeconds)s)")
         deviceBrowser.start()
         timer = Timer.scheduledTimer(withTimeInterval: browseSeconds, repeats: false) { [weak self] _ in
-            Log.browser.debug("timeout window reached, stopping")
-            self?.stopBrowsing()
-            self?.onTimeout?()
+            // Timer fires on the main runloop, which IS the main actor; ICA delegates
+            // and our state mutate from here. `assumeIsolated` makes that explicit
+            // to Swift 6 strict concurrency.
+            MainActor.assumeIsolated {
+                Log.browser.debug("timeout window reached, stopping")
+                self?.stopBrowsing()
+                self?.onTimeout?()
+            }
         }
     }
 

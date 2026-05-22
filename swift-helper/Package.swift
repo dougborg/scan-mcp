@@ -20,14 +20,10 @@ let package = Package(
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/mcp-scanner-helper",
-            swiftSettings: [
-                // Swift 5 language mode: ImageCaptureCore's @objc delegate
-                // protocols (ICScannerDeviceDelegate etc.) are NOT
-                // main-actor-isolated in Apple's headers, so @MainActor on our
-                // conforming classes triggers conformance-isolation errors in
-                // Swift 6 strict mode. Tested — that wasn't the icdd gate either.
-                .swiftLanguageMode(.v5),
-            ]
+            // Swift 6 strict concurrency. ICA's @objc delegate protocols
+            // (ICDeviceBrowserDelegate, ICScannerDeviceDelegate) are not
+            // main-actor-isolated in Apple's headers, so conforming @MainActor
+            // classes use `@preconcurrency` on the conformance.
             // Intentionally no Info.plist embed: matching scanline's structure
             // exactly. With minos=15.0, icdd lets us in, but LaunchServices
             // returns different application metadata depending on whether

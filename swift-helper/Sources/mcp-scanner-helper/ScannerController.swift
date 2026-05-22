@@ -5,7 +5,8 @@ import Foundation
 import ImageCaptureCore
 import UniformTypeIdentifiers
 
-final class ScannerController: NSObject, ICScannerDeviceDelegate {
+@MainActor
+final class ScannerController: NSObject, @preconcurrency ICScannerDeviceDelegate {
     let scanner: ICScannerDevice
     let params: ScanParams
     private(set) var scannedURLs: [URL] = []
@@ -41,8 +42,10 @@ final class ScannerController: NSObject, ICScannerDeviceDelegate {
         // 30s watchdog so a denied Local Network permission (or any other stall)
         // surfaces as an error event rather than a silent hang.
         sessionTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: false) { [weak self] _ in
-            guard let self = self, !self.sessionOpened else { return }
-            self.fail("session open timed out after 30s — likely a macOS permissions issue. Try running once interactively to trigger the Privacy & Security prompt, or check System Settings → Privacy & Security → Local Network.")
+            MainActor.assumeIsolated {
+                guard let self = self, !self.sessionOpened else { return }
+                self.fail("session open timed out after 30s — likely a macOS permissions issue. Try running once interactively to trigger the Privacy & Security prompt, or check System Settings → Privacy & Security → Local Network.")
+            }
         }
         scanner.requestOpenSession()
     }
