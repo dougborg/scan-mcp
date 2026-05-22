@@ -43,6 +43,10 @@ The `scripts/build-helper.sh` script will:
 
 Bare CLI binaries can't be `stapler staple`d (only `.app`/`.dmg`/`.pkg`/`.zip` containers can), so Gatekeeper fetches the notarization ticket online at first run on the end user's machine. That's the same model as e.g. signed Homebrew bottles or scripts distributed via curl pipes.
 
+### Notarization cache
+
+The script caches successful notarizations so rebuilds with identical content skip the 30s–2min Apple round-trip. The cache key composes the CDHashes of both arm64 and x86_64 slices (each architecture has its own signature), keeping the key stable regardless of which host built the binary. After a successful `notarytool submit`, a sentinel file is written to `dist/.notary-cache/<arm64hash>-<x86_64hash>.ok`; on the next run, if both slices' CDHashes match the cached key, the submission is skipped. The cache lives under `dist/` (gitignored) and goes away when `dist/` is deleted. Override the location via `NOTARY_CACHE_DIR` (e.g., to persist across CI runs).
+
 ## Why both env vars
 
 `DEVELOPER_ID_APPLICATION` alone produces a signed binary that *macOS Gatekeeper still distrusts* (unsigned and signed-but-not-notarized look similar to users — "developer cannot be verified"). Adding `NOTARY_PROFILE` is what makes it trusted on first run.

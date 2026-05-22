@@ -10,6 +10,11 @@
 #                             `xcrun notarytool store-credentials <name>`).
 #                             When set together with DEVELOPER_ID_APPLICATION,
 #                             submits the binary to Apple's notary service.
+#   NOTARY_CACHE_DIR          Directory holding `<cdhash>.ok` sentinel files for
+#                             binaries already accepted by the notary service.
+#                             Defaults to `dist/.notary-cache`. When a sentinel
+#                             matching the freshly-signed binary's CDHash exists,
+#                             `notarytool submit` is skipped.
 #
 # This is a no-op on non-macOS platforms (Linux installs use only the SANE backend).
 
@@ -63,12 +68,32 @@ else
 fi
 
 if [[ -n "${NOTARY_PROFILE:-}" && -n "${DEVELOPER_ID_APPLICATION:-}" ]]; then
-  echo "build:helper: notarizing via $NOTARY_PROFILE (this may take 1-5 minutes)"
-  ZIP_PATH="/tmp/mcp-scanner-helper-notarize-$$.zip"
-  trap 'rm -f "$ZIP_PATH"' EXIT
-  /usr/bin/ditto -c -k --keepParent "$OUT" "$ZIP_PATH"
-  xcrun notarytool submit "$ZIP_PATH" --keychain-profile "$NOTARY_PROFILE" --wait
-  echo "build:helper: notarization complete"
+  # CDHash uniquely identifies a slice's code+signature. A universal binary
+  # has one CDHash per architecture, and `codesign -d` without --arch returns
+  # only the host slice's hash — composing both makes the cache key cover the
+  # entire artifact and stay stable across arm64 vs x86_64 build hosts.
+  CDHASH_ARM64=$(codesign -d --verbose=4 --arch arm64 "$OUT" 2>&1 | awk -F= '/^CDHash=/{print $2; exit}')
+  CDHASH_X86_64=$(codesign -d --verbose=4 --arch x86_64 "$OUT" 2>&1 | awk -F= '/^CDHash=/{print $2; exit}')
+  if [[ -z "$CDHASH_ARM64" || -z "$CDHASH_X86_64" ]]; then
+    echo "build:helper: ERROR — could not extract per-slice CDHashes from $OUT (arm64=$CDHASH_ARM64 x86_64=$CDHASH_X86_64)" >&2
+    exit 1
+  fi
+  CACHE_KEY="${CDHASH_ARM64}-${CDHASH_X86_64}"
+  NOTARY_CACHE_DIR="${NOTARY_CACHE_DIR:-$ROOT/dist/.notary-cache}"
+  CACHE_SENTINEL="$NOTARY_CACHE_DIR/$CACHE_KEY.ok"
+
+  if [[ -f "$CACHE_SENTINEL" ]]; then
+    echo "build:helper: $CACHE_KEY already notarized (cache hit); skipping submission"
+  else
+    echo "build:helper: notarizing via $NOTARY_PROFILE (this may take 1-5 minutes)"
+    ZIP_PATH="/tmp/mcp-scanner-helper-notarize-$$.zip"
+    trap 'rm -f "$ZIP_PATH"' EXIT
+    /usr/bin/ditto -c -k --keepParent "$OUT" "$ZIP_PATH"
+    xcrun notarytool submit "$ZIP_PATH" --keychain-profile "$NOTARY_PROFILE" --wait
+    mkdir -p "$NOTARY_CACHE_DIR"
+    : > "$CACHE_SENTINEL"
+    echo "build:helper: notarization complete; cached at $CACHE_SENTINEL"
+  fi
 else
   echo "build:helper: NOTARY_PROFILE not set; skipping notarization"
 fi
