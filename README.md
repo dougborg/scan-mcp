@@ -84,8 +84,8 @@ scan-mcp supports both Linux (via SANE) and macOS (via Apple's ImageCaptureCore 
 
 ### macOS
 
-- macOS 13 (Ventura) or newer.
-- No external tools required — the npm package ships a bundled native helper binary (`mcp-scanner-helper`) that wraps ImageCaptureCore.
+- macOS 15 (Sequoia) or newer. The bundled helper requires this minimum because `icdd` rejects ImageCaptureCore session-open from clients built against older SDKs.
+- No external tools required — the npm package ships a bundled native helper binary (`mcp-scanner-helper`) that wraps ImageCaptureCore. The binary is signed with a Developer ID certificate and notarized by Apple, so Gatekeeper allows it without prompts on first launch.
 - Network scanners that speak AirScan / eSCL are auto-discovered via Bonjour (same as the built-in `Image Capture.app`); USB scanners and macOS-shared scanners are also supported.
 - First-time use may prompt for ICA / network permission in System Settings → Privacy & Security.
 - Apple Intelligence-powered features (autoname, summarize) require macOS 26+ and are runtime-detected — query the `get_capabilities` tool to see what's available.
