@@ -43,6 +43,7 @@ describe("registerScanServer", () => {
         "list_jobs",
         "get_manifest",
         "get_events",
+        "assemble_duplex",
       ])
     );
     const resources = Object.keys(internal._registeredResourceTemplates);

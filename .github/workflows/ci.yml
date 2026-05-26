@@ -40,7 +40,9 @@ jobs:
         run: npm test -- --run
 
   verify-macos:
-    runs-on: macos-14
+    # macos-15 ships Xcode 16 / Swift 6; the helper's Package.swift declares
+    # swift-tools-version: 6.0 (required for Swift 6 strict concurrency).
+    runs-on: macos-15
     permissions:
       contents: read
     env:

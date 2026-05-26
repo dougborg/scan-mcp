@@ -20,7 +20,7 @@ export type StartScanResult = {
   state: "running" | "completed" | "cancelled" | "error";
 };
 
-type Manifest = {
+export type Manifest = {
   job_id: string;
   device_id: string | null;
   created_at: string;
@@ -28,6 +28,11 @@ type Manifest = {
   pages: { index: number; path: string; sha256: string }[];
   documents: { index: number; pages: number[]; path: string; sha256: string }[];
   state: "running" | "completed" | "cancelled" | "error";
+  source_jobs?: {
+    front: string;
+    back: string;
+    back_order: "reversed" | "natural";
+  };
 };
 
 async function initializeJob(input: StartScanInput, ctx: AppContext): Promise<{ runDir: string; manifest: Manifest; eventsPath: string }> {
@@ -85,10 +90,21 @@ async function runScan(runDir: string, manifest: Manifest, eventsPath: string, c
   }
 }
 
-async function processPages(runDir: string, manifest: Manifest, ctx: AppContext) {
+export async function processPages(
+  runDir: string,
+  manifest: Manifest,
+  ctx: AppContext,
+  sourcePagePaths?: readonly string[]
+) {
   const { config } = ctx;
-  const entries = await fs.readdir(runDir);
-  const pageFiles = entries.filter((f) => f.startsWith("page_") && f.endsWith(".tiff")).sort();
+  let pageFiles: string[];
+  if (sourcePagePaths) {
+    pageFiles = sourcePagePaths.map((_, idx) => `page_${String(idx + 1).padStart(4, "0")}.tiff`);
+    await Promise.all(sourcePagePaths.map((src, idx) => fs.copyFile(src, path.join(runDir, pageFiles[idx]))));
+  } else {
+    const entries = await fs.readdir(runDir);
+    pageFiles = entries.filter((f) => f.startsWith("page_") && f.endsWith(".tiff")).sort();
+  }
   for (let idx = 0; idx < pageFiles.length; idx++) {
     const f = pageFiles[idx];
     const p = path.join(runDir, f);
@@ -237,7 +253,7 @@ async function fileExists(p: string): Promise<boolean> {
   }
 }
 
-async function hashFile(p: string): Promise<string> {
+export async function hashFile(p: string): Promise<string> {
   const h = crypto.createHash("sha256");
   h.update(await fs.readFile(p));
   return h.digest("hex");
