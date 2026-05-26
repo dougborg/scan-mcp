@@ -24,9 +24,13 @@ const cacheDir = join(process.cwd(), '.npm-cache-pack');
 if (!existsSync(cacheDir)) mkdirSync(cacheDir, { recursive: true });
 
 const out = run('npm', ['pack', '--json', '--dry-run', '--cache', cacheDir]);
+// `npm pack` runs the `prepack` hook (which builds the Swift helper and writes
+// progress to stdout), then appends its JSON array. Parse from the first `[` to
+// strip the preamble.
+const jsonStart = out.indexOf('[');
 let payload;
 try {
-  payload = JSON.parse(out);
+  payload = JSON.parse(jsonStart >= 0 ? out.slice(jsonStart) : out);
 } catch {
   console.error('[check-tarball] could not parse JSON output from npm pack');
   console.error(out);
