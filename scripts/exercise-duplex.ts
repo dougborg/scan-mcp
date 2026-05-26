@@ -3,13 +3,12 @@
 // Interactive exercise for assemble_duplex on a real scanner.
 //
 // Flow:
-//   1. Scan fronts via ADF (simplex).
+//   1. Scan fronts via ADF (simplex) with output_format=pdf-searchable.
 //   2. Pause for user to flip the stack.
 //   3. Scan backs.
 //   4. Dry-run merge preview.
-//   5. Assemble the duplex job (interleaved TIFF).
-//   6. Invoke the Swift helper's `assemble-pdf --searchable` against the merged
-//      page TIFFs to produce a Vision-OCR'd searchable PDF.
+//   5. Call assemble_duplex — interleaves pages into a TIFF AND invokes the
+//      Swift helper for a Vision-OCR'd PDF (server-side, no extra steps here).
 //
 // Usage (requires `npm run build` once so the Swift helper exists):
 //   npx tsx scripts/exercise-duplex.ts
@@ -18,19 +17,18 @@
 //   INBOX_DIR=...        override default inbox location
 //   COLOR_MODE=...       Lineart (default) | Gray | Color
 //   RESOLUTION_DPI=...   default 300
-//   SKIP_OCR=1           produce a non-searchable PDF (no Vision OCR)
+//   OUTPUT_FORMAT=...    pdf-searchable (default) | pdf | tiff
+//   SKIP_OCR=1           alias for OUTPUT_FORMAT=pdf (PDF without OCR layer)
 //
 import readline from "readline/promises";
-import { execa } from "execa";
 import { existsSync, statSync } from "fs";
 import { readFile } from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
 
-// resolveHelperPath in src/services/backends/ica.ts walks up from the running
-// module to find the helper binary, which assumes execution from dist/. When
-// run via tsx from src/, it misses dist/bin/mcp-scanner-helper. Set the
-// explicit override before loadConfig() reads env.
+// resolveHelperPath walks up from the calling module to find dist/bin or the
+// swift-helper build directory. When this script runs via tsx from src/ rather
+// than dist/, point at the bundled dist/bin/ explicitly.
 if (!process.env.MCP_SCANNER_HELPER_BIN) {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const guess = path.resolve(here, "..", "dist", "bin", "mcp-scanner-helper");
@@ -47,7 +45,11 @@ import type { AppContext } from "../src/context.js";
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 const ask = (q: string) => rl.question(q);
 
-const scanParams: StartScanInput = { source: "ADF" };
+const outputFormat = process.env.SKIP_OCR
+  ? "pdf"
+  : (process.env.OUTPUT_FORMAT ?? "pdf-searchable");
+
+const scanParams: StartScanInput = { source: "ADF", output_format: outputFormat };
 if (process.env.RESOLUTION_DPI) scanParams.resolution_dpi = parseInt(process.env.RESOLUTION_DPI, 10);
 if (process.env.COLOR_MODE) scanParams.color_mode = process.env.COLOR_MODE;
 
@@ -59,9 +61,10 @@ async function main() {
 
   console.log(`Backend:        ${backend.name}`);
   console.log(`Inbox:          ${path.resolve(config.INBOX_DIR)}`);
-  console.log(`Scan params:    ${JSON.stringify(scanParams)} (override via COLOR_MODE / RESOLUTION_DPI)`);
+  console.log(`Scan params:    ${JSON.stringify(scanParams)}`);
   console.log("");
-  console.log("This will scan the stack twice (fronts, then flipped backs), interleave them, and produce a multi-page PDF.");
+  console.log("This will scan the stack twice (fronts, then flipped backs), interleave the pages,");
+  console.log(`and produce a multi-page ${outputFormat === "pdf-searchable" ? "Vision-OCR'd searchable PDF" : outputFormat.toUpperCase()}.`);
   console.log("");
 
   await ask("Load the stack FACE-UP into the ADF, then press Enter to scan FRONTS... ");
@@ -98,45 +101,28 @@ async function main() {
     return;
   }
 
+  const startedAt = Date.now();
+  console.log("");
+  console.log(`Assembling merged job${outputFormat !== "tiff" ? " (helper runs Vision OCR per page on the merged set)" : ""}...`);
   const merged = await assembleDuplex({ front_job_id: fronts, back_job_id: backs }, ctx);
   if (merged.state !== "completed") {
     console.error(`Merge failed: ${merged.error}`);
     rl.close();
     process.exit(1);
   }
-  const mergedTiff = path.join(merged.run_dir!, "doc_0001.tiff");
-  console.log("");
-  console.log(`✓ Merged job ${merged.job_id}`);
-  console.log(`  ${merged.page_count} pages`);
-  if (merged.warnings.length) console.log(`  Warnings: ${merged.warnings.join("; ")}`);
-  console.log(`  TIFF:        ${mergedTiff} (${humanSize(mergedTiff)})`);
 
-  const pdfPath = path.join(merged.run_dir!, "doc_0001.pdf");
+  console.log("");
+  console.log(`✓ Merged job ${merged.job_id} (${((Date.now() - startedAt) / 1000).toFixed(1)}s)`);
+  console.log(`  ${merged.page_count} pages`);
+  if (merged.warnings.length) for (const w of merged.warnings) console.log(`  Warning: ${w}`);
+
   const manifest = JSON.parse(await readFile(path.join(merged.run_dir!, "manifest.json"), "utf8"));
-  const pagePaths = (manifest.pages as { path: string }[]).map((p) => p.path);
-  await makePdfViaHelper(pagePaths, pdfPath, !process.env.SKIP_OCR);
+  for (const doc of manifest.documents as { path: string }[]) {
+    const ext = path.extname(doc.path).slice(1).toUpperCase();
+    console.log(`  ${ext.padEnd(5)} ${doc.path} (${humanSize(doc.path)})`);
+  }
 
   rl.close();
-}
-
-async function makePdfViaHelper(pagePaths: string[], pdfPath: string, searchable: boolean): Promise<void> {
-  const helper = process.env.MCP_SCANNER_HELPER_BIN;
-  if (!helper) {
-    console.error("  PDF skipped: MCP_SCANNER_HELPER_BIN not set and dist/bin/mcp-scanner-helper not found. Run `npm run build` first.");
-    return;
-  }
-  const args = ["assemble-pdf", "--output", pdfPath, ...(searchable ? ["--searchable"] : []), ...pagePaths];
-  console.log("");
-  console.log(`Assembling PDF${searchable ? " with Vision OCR" : ""} via the Swift helper... (this can take a few seconds per page)`);
-  const startedAt = Date.now();
-  try {
-    await execa(helper, args);
-    const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
-    console.log(`  PDF:         ${pdfPath} (${humanSize(pdfPath)}, ${searchable ? "Vision-OCR'd, searchable" : "image-only"}, ${seconds}s)`);
-  } catch (e) {
-    console.error(`  Helper assemble-pdf failed: ${(e as Error).message}`);
-    console.error(`  The merged TIFF is still available; you can convert manually.`);
-  }
 }
 
 function humanSize(p: string): string {

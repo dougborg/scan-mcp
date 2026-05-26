@@ -253,7 +253,7 @@ async function fileExists(p: string): Promise<boolean> {
   }
 }
 
-async function hashFile(p: string): Promise<string> {
+export async function hashFile(p: string): Promise<string> {
   const h = crypto.createHash("sha256");
   h.update(await fs.readFile(p));
   return h.digest("hex");

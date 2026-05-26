@@ -2,6 +2,21 @@ import { describe, it, expect, beforeEach, beforeAll, afterAll, vi } from "vites
 import fs from "fs";
 import path from "path";
 import { v4 as uuidv4 } from "uuid";
+
+// Mock execa so the helper's assemble-pdf invocation is intercepted in tests.
+// Default behaviour: succeed silently and (when --output is in the args) write
+// a tiny placeholder file so the duplex code's subsequent hashFile() succeeds.
+vi.mock("execa", () => ({
+  execa: vi.fn(async (_bin: string, args: string[]) => {
+    const outputIdx = args.indexOf("--output");
+    if (outputIdx >= 0 && args[outputIdx + 1]) {
+      await fs.promises.writeFile(args[outputIdx + 1], "FAKE_HELPER_OUTPUT");
+    }
+    return { stdout: "", stderr: "", exitCode: 0, command: "", failed: false, timedOut: false, isCanceled: false, killed: false };
+  }),
+}));
+
+import { execa } from "execa";
 import { assembleDuplex } from "../services/duplex.js";
 import type { Manifest } from "../services/jobs.js";
 import { MockBackend } from "../services/backends/mock.js";
@@ -181,5 +196,59 @@ describe("assembleDuplex", () => {
       back,
       back_order: "reversed",
     });
+  });
+
+  it("invokes the helper to produce a searchable PDF when front output_format is pdf-searchable", async () => {
+    const front = makeSourceJob(2, { output_format: "pdf-searchable" });
+    const back = makeSourceJob(2, { output_format: "pdf-searchable" });
+    const result = await assembleDuplex({ front_job_id: front, back_job_id: back }, ctx);
+
+    expect(result.state).toBe("completed");
+
+    // Helper was called once, with --searchable and the expected output path.
+    const calls = vi.mocked(execa).mock.calls;
+    const helperCalls = calls.filter((c) => Array.isArray(c[1]) && c[1][0] === "assemble-pdf");
+    expect(helperCalls).toHaveLength(1);
+    const args = helperCalls[0][1] as string[];
+    expect(args).toContain("--searchable");
+    const outputIdx = args.indexOf("--output");
+    expect(args[outputIdx + 1]).toBe(path.join(result.run_dir!, "doc_0001.pdf"));
+    // Remaining positional args are the 4 page TIFFs.
+    const pagePathArgs = args.slice(args.indexOf("--searchable") + 1);
+    expect(pagePathArgs).toHaveLength(4);
+
+    // Both TIFF and PDF documents are recorded in the manifest.
+    const merged = readMergedManifest(result.run_dir!);
+    expect(merged.documents).toHaveLength(2);
+    const formats = merged.documents.map((d) => path.extname(d.path));
+    expect(formats.sort()).toEqual([".pdf", ".tiff"]);
+  });
+
+  it("invokes the helper without --searchable when front output_format is pdf", async () => {
+    const front = makeSourceJob(2, { output_format: "pdf" });
+    const back = makeSourceJob(2, { output_format: "pdf" });
+    const result = await assembleDuplex({ front_job_id: front, back_job_id: back }, ctx);
+
+    expect(result.state).toBe("completed");
+    const calls = vi.mocked(execa).mock.calls;
+    const helperCalls = calls.filter((c) => Array.isArray(c[1]) && c[1][0] === "assemble-pdf");
+    expect(helperCalls).toHaveLength(1);
+    expect(helperCalls[0][1]).not.toContain("--searchable");
+  });
+
+  it("skips PDF and logs a warning when the helper invocation fails", async () => {
+    vi.mocked(execa).mockRejectedValueOnce(new Error("helper missing"));
+
+    const front = makeSourceJob(2, { output_format: "pdf-searchable" });
+    const back = makeSourceJob(2, { output_format: "pdf-searchable" });
+    const result = await assembleDuplex({ front_job_id: front, back_job_id: back }, ctx);
+
+    // Job still completes — TIFF output is unaffected.
+    expect(result.state).toBe("completed");
+    expect(result.warnings.some((w) => /PDF assembly failed/.test(w))).toBe(true);
+
+    const merged = readMergedManifest(result.run_dir!);
+    expect(merged.documents).toHaveLength(1);
+    expect(path.extname(merged.documents[0].path)).toBe(".tiff");
   });
 });

@@ -1,9 +1,11 @@
 import { promises as fs } from "fs";
 import path from "path";
 import { v4 as uuidv4 } from "uuid";
+import { execa } from "execa";
 import type { AppContext } from "../context.js";
 import { resolveJobPath } from "./utils.js";
-import { processPages, type Manifest } from "./jobs.js";
+import { resolveHelperPath } from "./helper-path.js";
+import { processPages, hashFile, type Manifest } from "./jobs.js";
 
 export type AssembleDuplexInput = {
   front_job_id: string;
@@ -123,6 +125,34 @@ export async function assembleDuplex(
 
   await processPages(runDir, manifest, ctx, steps.map((s) => s.path));
 
+  // Inherit PDF output from the front job's params. The TIFF is already produced
+  // by processPages; we additionally invoke the Swift helper to produce a
+  // matching PDF (Vision-OCR'd when output_format=pdf-searchable). On macOS the
+  // helper is present; on Linux/SCAN_MOCK it is not, in which case we log a
+  // warning and continue with TIFF-only output rather than failing the job.
+  const fmt = front.params.output_format;
+  if (fmt === "pdf" || fmt === "pdf-searchable") {
+    const pdfPath = path.join(runDir, "doc_0001.pdf");
+    const pageTiffs = manifest.pages.map((p) => p.path);
+    const pdfOk = await assemblePdfViaHelper({
+      pages: pageTiffs,
+      output: pdfPath,
+      searchable: fmt === "pdf-searchable",
+      ctx,
+      jobId: id,
+    });
+    if (pdfOk) {
+      manifest.documents.push({
+        index: manifest.documents.length + 1,
+        pages: manifest.pages.map((p) => p.index),
+        path: pdfPath,
+        sha256: await hashFile(pdfPath),
+      });
+    } else {
+      warnings.push(`PDF assembly failed; only TIFF output is available. See logs for details.`);
+    }
+  }
+
   manifest.state = "completed";
   await fs.writeFile(path.join(runDir, "manifest.json"), JSON.stringify(manifest, null, 2));
 
@@ -144,5 +174,27 @@ async function readManifest(runDir: string): Promise<Manifest | null> {
     return JSON.parse(txt) as Manifest;
   } catch {
     return null;
+  }
+}
+
+async function assemblePdfViaHelper(args: {
+  pages: string[];
+  output: string;
+  searchable: boolean;
+  ctx: AppContext;
+  jobId: string;
+}): Promise<boolean> {
+  const { pages, output, searchable, ctx, jobId } = args;
+  const helper = resolveHelperPath(ctx.config);
+  const cliArgs = ["assemble-pdf", "--output", output, ...(searchable ? ["--searchable"] : []), ...pages];
+  try {
+    await execa(helper, cliArgs, { shell: false, timeout: 600_000 });
+    return true;
+  } catch (err) {
+    ctx.logger.warn(
+      { jobId, helper, error: String(err), searchable, pageCount: pages.length },
+      "assemble_duplex: helper assemble-pdf failed; falling back to TIFF-only output"
+    );
+    return false;
   }
 }

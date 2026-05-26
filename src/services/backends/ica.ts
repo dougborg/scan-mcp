@@ -1,8 +1,6 @@
-import { existsSync } from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
 import { execa, type Subprocess } from "execa";
 import type { AppContext } from "../../context.js";
+import { resolveHelperPath } from "../helper-path.js";
 import type {
   Backend,
   Device,
@@ -17,7 +15,7 @@ export class IcaBackend implements Backend {
   async listDevices(ctx: AppContext): Promise<Device[]> {
     const { logger } = ctx;
     try {
-      const { stdout } = await execa(resolveHelperPath(ctx), ["list-devices", "--browse-seconds", "3"], {
+      const { stdout } = await execa(resolveHelperPath(ctx.config), ["list-devices", "--browse-seconds", "3"], {
         shell: false,
         timeout: 15_000,
       });
@@ -38,7 +36,7 @@ export class IcaBackend implements Backend {
     const { logger } = ctx;
     try {
       const { stdout } = await execa(
-        resolveHelperPath(ctx),
+        resolveHelperPath(ctx.config),
         ["device-options", "--device-id", deviceId, "--browse-seconds", "5"],
         { shell: false, timeout: 30_000 }
       );
@@ -80,7 +78,7 @@ export class IcaBackend implements Backend {
 
     try {
       proc = execa(
-        resolveHelperPath(ctx),
+        resolveHelperPath(ctx.config),
         ["scan", "--params", params, "--out-dir", runDir, "--browse-seconds", "8"],
         { shell: false }
       );
@@ -147,35 +145,3 @@ function parseJSON<T>(s: string): T | undefined {
   }
 }
 
-/**
- * Resolve the path to the bundled mcp-scanner-helper binary.
- *
- * Order of resolution:
- *  1. MCP_SCANNER_HELPER_BIN env var (explicit override)
- *  2. dist/bin/mcp-scanner-helper relative to this module (production npm install)
- *  3. swift-helper/.build/release/mcp-scanner-helper relative to package root (dev)
- *  4. swift-helper/.build/debug/mcp-scanner-helper relative to package root (dev)
- */
-function resolveHelperPath(ctx: AppContext): string {
-  const override = ctx.config.MCP_SCANNER_HELPER_BIN;
-  if (override && existsSync(override)) return override;
-
-  // import.meta.url points at the compiled JS module; walk up to find the package root.
-  const thisFile = fileURLToPath(import.meta.url);
-  // In dist/, structure is dist/services/backends/ica.js → walk up to dist/, then to package root.
-  const distBinPath = path.resolve(thisFile, "..", "..", "..", "bin", "mcp-scanner-helper");
-  if (existsSync(distBinPath)) return distBinPath;
-
-  // Dev fallbacks — walk up to find the package root, then look in swift-helper/.build/
-  // src/services/backends/ica.ts → up 4 levels to package root in dev.
-  for (const ascend of [4, 3, 5]) {
-    const packageRoot = path.resolve(thisFile, ...Array(ascend).fill(".."));
-    for (const buildKind of ["release", "debug"]) {
-      const p = path.join(packageRoot, "swift-helper", ".build", buildKind, "mcp-scanner-helper");
-      if (existsSync(p)) return p;
-    }
-  }
-
-  // Last resort: return the expected production path so the spawn error message is informative.
-  return distBinPath;
-}
