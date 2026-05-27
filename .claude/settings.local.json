@@ -7,7 +7,9 @@
       "Bash(node bin/scan-mcp:*)",
       "Skill(setup-mcp)",
       "mcp__scan__start_scan_job",
-      "mcp__scan__get_job_status"
+      "mcp__scan__get_job_status",
+      "Bash(gh pr *)",
+      "Bash(gh issue *)"
     ]
   }
 }
