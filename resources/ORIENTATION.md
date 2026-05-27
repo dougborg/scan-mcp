@@ -58,6 +58,7 @@ Examples:
 - “Scan a stack double-sided” / “Use the feeder, both sides”
   - Prefer `ADF Duplex` if available; otherwise `ADF`.
   - Example params: `{ "duplex": true, "source": "ADF Duplex", "resolution_dpi": 300, "color_mode": "Lineart" }` (adjust color/mode as requested).
+  - **If the scanner has no `ADF Duplex` source** (`get_device_options` returns only `Flatbed` and `ADF`), use the two-pass workflow: scan fronts via `ADF`, prompt the user to flip the stack, scan backs via `ADF`, then call `assemble_duplex({ front_job_id, back_job_id })` to interleave them into a single job. Set `output_format: "pdf-searchable"` on both source scans to get a Vision-OCR'd PDF as part of the merged output. Use `dry_run: true` first to preview the page order. `back_order` defaults to `"reversed"` (correct for a normal flip).
 
 - “Scan text for OCR” (upstream OCR handled elsewhere; optimize capture)
   - Prefer 300 dpi and `Gray` or `Lineart`. If unsure, `Gray` is a safe OCR choice when Lineart is too lossy.
