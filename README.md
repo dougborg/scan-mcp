@@ -5,13 +5,25 @@
 <h1 align="center">scan-mcp</h1>
 
 
-[![CI](https://github.com/jacksenechal/scan-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/jacksenechal/scan-mcp/actions/workflows/ci.yml)
-[![npm version](https://img.shields.io/npm/v/scan-mcp.svg)](https://www.npmjs.com/package/scan-mcp)
-![node-current](https://img.shields.io/node/v/scan-mcp)
-[![npm downloads](https://img.shields.io/npm/dm/scan-mcp.svg)](https://www.npmjs.com/package/scan-mcp)
+[![CI](https://github.com/dougborg/scan-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/dougborg/scan-mcp/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/@dougborg/scan-mcp.svg)](https://www.npmjs.com/package/@dougborg/scan-mcp)
+![node-current](https://img.shields.io/node/v/@dougborg/scan-mcp)
+[![npm downloads](https://img.shields.io/npm/dm/@dougborg/scan-mcp.svg)](https://www.npmjs.com/package/@dougborg/scan-mcp)
 
 
 Minimal MCP server for scanner capture (ADF/duplex/page-size), batching, and multipage assembly.
+
+> **Maintained fork.** This is the maintained fork of [`jacksenechal/scan-mcp`](https://github.com/jacksenechal/scan-mcp),
+> adding a macOS / ImageCaptureCore (ICA) backend, simplex-to-duplex page assembly, and Vision-OCR'd
+> searchable-PDF output. Published on npm as [`@dougborg/scan-mcp`](https://www.npmjs.com/package/@dougborg/scan-mcp).
+> The CLI command and MCP server identifier remain `scan-mcp`.
+
+## Differences from upstream
+
+- **macOS / ICA backend** — native capture through Apple's ImageCaptureCore via a bundled, signed-and-notarized helper binary. No SANE required on macOS. (Upstream is SANE/Linux only.)
+- **Simplex-to-duplex assembly** — `assemble_duplex` interleaves two one-sided scan passes (fronts, then a flipped stack of backs) into a single duplex document, for feeders without a true `ADF Duplex` source.
+- **Searchable PDF output** — `output_format: "pdf-searchable"` embeds a Vision-OCR'd invisible text layer behind each page (macOS/ICA).
+- **Maintained** — Dependabot enabled, regular releases. See [docs/PUBLISHING.md](docs/PUBLISHING.md).
 
 ## Features
 
@@ -26,14 +38,14 @@ Targets Node 22+ on Linux (via SANE / `scanimage`) and macOS (via Apple's ImageC
 
 Add a server entry to your MCP client configuration:
 
-```
+```json
 {
   "mcpServers": {
     "scan": {
       "command": "npx",
       "args": [
         "-y",
-        "scan-mcp"
+        "@dougborg/scan-mcp"
       ],
       "env": {
         "INBOX_DIR": "~/Documents/scanned_documents/inbox"
@@ -46,6 +58,31 @@ Add a server entry to your MCP client configuration:
 - This invocation runs over stdio for a privacy-first, single-machine setup.
 - Call `start_scan_job` without a `device_id` to auto-select a scanner and begin scanning.
 - Artifacts are written under `INBOX_DIR` per job: `job-*/page_*.tiff`, `doc_*.tiff`, `manifest.json`, `events.jsonl`.
+
+## Examples
+
+**Scan a duplex stack in one pass** (scanner has an `ADF Duplex` source):
+
+```jsonc
+start_scan_job({ "source": "ADF Duplex" })
+```
+
+**Two-pass duplex** (feeder has only `ADF`): scan fronts, flip the stack, scan backs, then interleave.
+Set `output_format: "pdf-searchable"` on both passes to get an OCR'd PDF in the merged output:
+
+```jsonc
+start_scan_job({ "source": "ADF", "output_format": "pdf-searchable" })   // -> front_job_id
+// flip the stack in the feeder, then:
+start_scan_job({ "source": "ADF", "output_format": "pdf-searchable" })   // -> back_job_id
+assemble_duplex({ "front_job_id": "...", "back_job_id": "...", "dry_run": true })  // preview page order
+assemble_duplex({ "front_job_id": "...", "back_job_id": "..." })                  // write merged job
+```
+
+**Searchable PDF from a flatbed photo-quality scan:**
+
+```jsonc
+start_scan_job({ "source": "Flatbed", "color_mode": "Color", "resolution_dpi": 600, "output_format": "pdf-searchable" })
+```
 
 ## Streamable HTTP transport
 
@@ -63,10 +100,10 @@ scan-mcp --http
 
 ## Install
 
-- Run with npx: `npx scan-mcp` (recommended)
+- Run with npx: `npx -y @dougborg/scan-mcp` (recommended)
   - The CLI runs a quick preflight check for Node 22+ and required scanner/image tools and prints installation hints if anything is missing.
   - See recommended server config above
-- Use `npx scan-mcp --http` to launch the streamable HTTP transport when running on another machine.
+- Use `npx -y @dougborg/scan-mcp --http` to launch the streamable HTTP transport when running on another machine.
 - CLI help: `scan-mcp --help`
 - From source (for development):
   - `npm install`
@@ -76,6 +113,12 @@ scan-mcp --http
 ## System Requirements
 
 scan-mcp supports both Linux (via SANE) and macOS (via Apple's ImageCaptureCore framework).
+
+| Platform | Backend | Capture | Duplex assembly | Searchable PDF |
+| --- | --- | --- | --- | --- |
+| macOS | ICA (bundled helper) | ✅ | ✅ | ✅ (Vision OCR) |
+| Linux | SANE (`scanimage`) | ✅ | ✅ | ⏳ TIFF/PDF; OCR pending ([#10](https://github.com/dougborg/scan-mcp/issues/10)) |
+| Windows | — | ❌ | ❌ | ❌ |
 
 ### Linux
 
@@ -133,8 +176,16 @@ scan-mcp supports both Linux (via SANE) and macOS (via Apple's ImageCaptureCore 
     - `page_size` (`Letter` | `A4` | `Legal` | `Custom`)
     - `custom_size_mm` { `width`, `height` }
     - `doc_break_policy` { `type`, `blank_threshold`, `page_count`, `timer_ms`, `barcode_values` }
-    - `output_format` (string, default `tiff`)
+    - `output_format` (string, default `tiff`; `tiff` | `pdf` | `pdf-searchable`)
     - `tmp_dir` (string)
+
+- **assemble_duplex**
+  - Interleave two completed simplex scan jobs (fronts + a flipped stack of backs) into a single duplex document.
+  - Inputs:
+    - `front_job_id` (string)
+    - `back_job_id` (string)
+    - `back_order` (`reversed` | `natural`, default `reversed` — matches a normal ADF flip)
+    - `dry_run` (boolean): return the planned page order without writing.
 
 - **get_job_status**
   - Inspect job state and artifact counts.
@@ -182,6 +233,10 @@ Defaults aim for 300dpi, reasonable color mode, and ADF/duplex when available. F
 - `npm run dev` (stdio MCP server), `npm run dev:http` (HTTP transport)
 - `make verify` runs lint, typecheck, and tests
 - Conventions: `docs/CONVENTIONS.md` and architecture in `docs/BLUEPRINT.md`
+
+## Releasing
+
+Releases are automated with release-please + npm Trusted Publishing. See [docs/PUBLISHING.md](docs/PUBLISHING.md).
 
 ## Roadmap
 
