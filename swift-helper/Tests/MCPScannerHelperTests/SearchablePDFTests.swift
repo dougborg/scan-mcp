@@ -153,6 +153,33 @@ final class SearchablePDFTests: XCTestCase {
         )
     }
 
+    func testSearchableMultipagePreservesPerPageText() throws {
+        // Three pages with distinct text, OCR'd through the concurrent pass.
+        // Guards that results are keyed back to the right page (order preserved).
+        let markers = ["ALPHA", "BRAVO", "CHARLIE"]
+        let tiffs = try markers.map { try makeTIFF(text: "Page \($0) Marker") }
+        defer { tiffs.forEach { try? FileManager.default.removeItem(at: $0) } }
+
+        let outURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("test-\(UUID().uuidString).pdf")
+        defer { try? FileManager.default.removeItem(at: outURL) }
+
+        let result = SearchablePDF.assemble(pageTIFFs: tiffs, outputURL: outURL, searchable: true)
+        XCTAssertNoThrow(try result.get())
+
+        guard let pdf = PDFDocument(url: outURL) else {
+            return XCTFail("could not open assembled PDF")
+        }
+        XCTAssertEqual(pdf.pageCount, 3)
+        for (i, marker) in markers.enumerated() {
+            let pageText = (pdf.page(at: i)?.string ?? "").uppercased()
+            XCTAssertTrue(
+                pageText.contains(marker),
+                "page \(i) should contain its own marker '\(marker)'. Got: '\(pageText)'"
+            )
+        }
+    }
+
     func testEmptyInputReturnsFailure() {
         let outURL = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("test-\(UUID().uuidString).pdf")
