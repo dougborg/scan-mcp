@@ -32,20 +32,8 @@ enum SearchablePDF {
             return .failure(error("no pages to assemble"))
         }
 
-        // Pass 1 — OCR (parallel). Only when a searchable layer is requested;
-        // image-only PDFs skip Vision entirely. Results are keyed by page index
-        // so the sequential draw pass can stay in order.
-        var ocrByIndex: [Int: [OCRLine]] = [:]
-        if searchable {
-            let lock = NSLock()
-            DispatchQueue.concurrentPerform(iterations: pageTIFFs.count) { i in
-                guard let lines = ocrPage(at: pageTIFFs[i], index: i) else { return }
-                lock.lock()
-                ocrByIndex[i] = lines
-                lock.unlock()
-            }
-        }
-
+        // Create the PDF context up front: it's cheap and rarely fails, but
+        // failing here after a full parallel OCR pass would waste that work.
         let mutableData = CFDataCreateMutable(nil, 0)!
         guard let consumer = CGDataConsumer(data: mutableData) else {
             return .failure(error("could not create PDF data consumer"))
@@ -56,6 +44,20 @@ enum SearchablePDF {
         var initialMediaBox = CGRect(x: 0, y: 0, width: 612, height: 792)
         guard let pdfContext = CGContext(consumer: consumer, mediaBox: &initialMediaBox, nil) else {
             return .failure(error("could not create CGPDFContext"))
+        }
+
+        // Pass 1 — OCR (parallel). Only when a searchable layer is requested;
+        // image-only PDFs skip Vision entirely. Results are keyed by page index
+        // so the sequential draw pass can stay in order.
+        var ocrByIndex: [Int: [OCRLine]] = [:]
+        if searchable {
+            let lock = NSLock()
+            DispatchQueue.concurrentPerform(iterations: pageTIFFs.count) { i in
+                guard let lines = ocrPage(at: pageTIFFs[i], index: i) else { return }
+                lock.lock()
+                defer { lock.unlock() }
+                ocrByIndex[i] = lines
+            }
         }
 
         // Pass 2 — draw pages in order into the (single-threaded) PDF context,
@@ -127,7 +129,7 @@ enum SearchablePDF {
         do {
             try handler.perform([request])
         } catch {
-            JSONOut.diagnostic("OCR failed on page \(index): \(error.localizedDescription)")
+            JSONOut.diagnostic("OCR failed on page \(index + 1): \(error.localizedDescription)")
             return []
         }
 

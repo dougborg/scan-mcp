@@ -172,10 +172,14 @@ final class SearchablePDFTests: XCTestCase {
         }
         XCTAssertEqual(pdf.pageCount, 3)
         for (i, marker) in markers.enumerated() {
-            let pageText = (pdf.page(at: i)?.string ?? "").uppercased()
+            // Vision can insert stray whitespace/newlines into extracted text;
+            // strip non-alphanumerics so the per-page association check stays
+            // robust without depending on exact spacing.
+            let raw = pdf.page(at: i)?.string ?? ""
+            let pageText = raw.uppercased().filter { $0.isLetter || $0.isNumber }
             XCTAssertTrue(
                 pageText.contains(marker),
-                "page \(i) should contain its own marker '\(marker)'. Got: '\(pageText)'"
+                "page \(i) should contain its own marker '\(marker)'. Got: '\(raw)'"
             )
         }
     }
