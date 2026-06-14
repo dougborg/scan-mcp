@@ -91,6 +91,7 @@ struct Scan: @preconcurrency ParsableCommand {
     private func emitComplete(pages: [URL], params: ScanParams, outDir: URL) {
         let outputFormat = params.output_format ?? .tiff
         var documentPath: String? = nil
+        var ocrConfidence: [SearchablePDF.PageConfidence]? = nil
 
         if outputFormat == .pdf || outputFormat == .pdfSearchable {
             JSONOut.line(ScanEvent.stage("finalizing"))
@@ -101,8 +102,9 @@ struct Scan: @preconcurrency ParsableCommand {
                 searchable: outputFormat == .pdfSearchable
             )
             switch result {
-            case .success:
+            case .success(let confidences):
                 documentPath = pdfURL.path
+                ocrConfidence = confidences.isEmpty ? nil : confidences
             case .failure(let err):
                 JSONOut.diagnostic("PDF assembly failed: \(err.localizedDescription)")
             }
@@ -111,7 +113,8 @@ struct Scan: @preconcurrency ParsableCommand {
         JSONOut.line(CompleteEvent(
             timestamp: JSONOut.iso8601.string(from: Date()),
             pages: pages.map { $0.path },
-            document: documentPath
+            document: documentPath,
+            ocrConfidence: ocrConfidence
         ))
     }
 }
@@ -121,4 +124,10 @@ private struct CompleteEvent: Encodable {
     let timestamp: String
     let pages: [String]
     let document: String?
+    let ocrConfidence: [SearchablePDF.PageConfidence]?
+
+    enum CodingKeys: String, CodingKey {
+        case type, timestamp, pages, document
+        case ocrConfidence = "ocr_confidence"
+    }
 }
