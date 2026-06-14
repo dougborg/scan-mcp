@@ -19,6 +19,26 @@ enum SearchablePDF {
         let boundingBox: CGRect
     }
 
+    /// Thread-safe sink for the parallel OCR pass. A reference type so the
+    /// `@Sendable` `concurrentPerform` closure captures a `let` constant rather
+    /// than mutating a captured `var`; writes are serialized with a lock.
+    private final class OCRCollector: @unchecked Sendable {
+        private let lock = NSLock()
+        private var storage: [Int: [OCRLine]] = [:]
+
+        func store(_ lines: [OCRLine], at index: Int) {
+            lock.lock()
+            defer { lock.unlock() }
+            storage[index] = lines
+        }
+
+        var byIndex: [Int: [OCRLine]] {
+            lock.lock()
+            defer { lock.unlock() }
+            return storage
+        }
+    }
+
     /// Assemble per-page TIFFs into a multipage PDF. When `searchable` is true,
     /// OCR is run on every page concurrently (Vision is thread-safe) before the
     /// pages are drawn sequentially into the single-threaded `CGPDFContext`.
@@ -49,16 +69,14 @@ enum SearchablePDF {
         // Pass 1 — OCR (parallel). Only when a searchable layer is requested;
         // image-only PDFs skip Vision entirely. Results are keyed by page index
         // so the sequential draw pass can stay in order.
-        var ocrByIndex: [Int: [OCRLine]] = [:]
+        let collector = OCRCollector()
         if searchable {
-            let lock = NSLock()
             DispatchQueue.concurrentPerform(iterations: pageTIFFs.count) { i in
                 guard let lines = ocrPage(at: pageTIFFs[i], index: i) else { return }
-                lock.lock()
-                defer { lock.unlock() }
-                ocrByIndex[i] = lines
+                collector.store(lines, at: i)
             }
         }
+        let ocrByIndex = collector.byIndex
 
         // Pass 2 — draw pages in order into the (single-threaded) PDF context,
         // overlaying the cached OCR lines as an invisible text layer.
