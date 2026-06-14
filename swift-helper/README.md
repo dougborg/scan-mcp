@@ -1,6 +1,6 @@
 # mcp-scanner-helper
 
-A native macOS CLI that wraps Apple's [ImageCaptureCore](https://developer.apple.com/documentation/imagecapturecore) framework with a JSON-over-stdio interface. It's the macOS-side backend for [scan-mcp](https://github.com/jacksenechal/scan-mcp).
+A native macOS CLI that wraps Apple's [ImageCaptureCore](https://developer.apple.com/documentation/imagecapturecore) framework with a JSON-over-stdio interface. It's the macOS-side backend for [scan-mcp](https://github.com/dougborg/scan-mcp).
 
 End users don't run this directly — scan-mcp spawns it from its Node process. The CLI is documented here for development and debugging.
 

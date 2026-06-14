@@ -1,6 +1,6 @@
 # NOTICE
 
-`mcp-scanner-helper` is the macOS/ICA backend helper for [scan-mcp](https://github.com/jacksenechal/scan-mcp).
+`mcp-scanner-helper` is the macOS/ICA backend helper for [scan-mcp](https://github.com/dougborg/scan-mcp).
 
 ## Third-party code
 

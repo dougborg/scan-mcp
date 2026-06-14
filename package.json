@@ -1,10 +1,10 @@
 {
-  "name": "scan-mcp",
+  "name": "@dougborg/scan-mcp",
   "version": "0.2.1",
-  "mcpName": "io.github.jacksenechal/scan-mcp",
+  "mcpName": "io.github.dougborg/scan-mcp",
   "private": false,
   "type": "module",
-  "description": "scan-mcp: MCP server for scanner capture (ADF/duplex/page-size), batching, and multipage assembly",
+  "description": "Maintained fork of scan-mcp: MCP server for scanner capture (ADF/duplex/page-size) with a macOS ImageCaptureCore backend, simplex-to-duplex assembly, and Vision-OCR'd searchable PDF output",
   "main": "dist/mcp.js",
   "types": "dist/mcp.d.ts",
   "scripts": {
@@ -63,17 +63,20 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/jacksenechal/scan-mcp.git"
+    "url": "https://github.com/dougborg/scan-mcp.git"
   },
   "bugs": {
-    "url": "https://github.com/jacksenechal/scan-mcp/issues"
+    "url": "https://github.com/dougborg/scan-mcp/issues"
   },
-  "homepage": "https://github.com/jacksenechal/scan-mcp#readme",
+  "homepage": "https://github.com/dougborg/scan-mcp#readme",
   "keywords": [
     "mcp",
     "scanner",
     "sane",
+    "ica",
+    "macos",
     "tiff",
+    "ocr",
     "cli",
     "server",
     "capture",
