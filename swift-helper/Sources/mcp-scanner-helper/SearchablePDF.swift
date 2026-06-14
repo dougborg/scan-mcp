@@ -109,8 +109,10 @@ enum SearchablePDF {
         // overlaying the cached OCR lines as an invisible text layer.
         for (i, tiffURL) in pageTIFFs.enumerated() {
             guard let (cgImage, pageSize) = loadImageAndSize(at: tiffURL) else {
-                JSONOut.diagnostic("warning: could not load page \(tiffURL.lastPathComponent)")
-                continue
+                // Fail rather than silently skip: a dropped page would leave the
+                // output PDF's page numbers (and the per-page confidence array,
+                // which is keyed by input index) misaligned from reality.
+                return .failure(error("could not load page \(tiffURL.lastPathComponent)"))
             }
             var mediaBox = CGRect(origin: .zero, size: pageSize)
             pdfContext.beginPage(mediaBox: &mediaBox)

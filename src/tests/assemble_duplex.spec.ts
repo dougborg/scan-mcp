@@ -224,6 +224,34 @@ describe("assembleDuplex", () => {
     expect(formats.sort()).toEqual([".pdf", ".tiff"]);
   });
 
+  it("threads helper-reported per-page OCR confidence onto the PDF document", async () => {
+    const ocrConfidence = [
+      { page: 1, line_count: 12, mean_confidence: 0.94, min_confidence: 0.71 },
+      { page: 2, line_count: 9, mean_confidence: 0.88, min_confidence: 0.42 },
+    ];
+    // One-shot: write the output file (so hashFile succeeds) and emit the
+    // helper's single-line JSON result carrying ocr_confidence.
+    vi.mocked(execa).mockImplementationOnce((async (_bin: string, args: string[]) => {
+      const outputIdx = args.indexOf("--output");
+      if (outputIdx >= 0 && args[outputIdx + 1]) {
+        await fs.promises.writeFile(args[outputIdx + 1], "FAKE_HELPER_OUTPUT");
+      }
+      return {
+        stdout: JSON.stringify({ status: "ok", searchable: true, ocr_confidence: ocrConfidence }),
+        stderr: "", exitCode: 0, command: "", failed: false, timedOut: false, isCanceled: false, killed: false,
+      };
+    }) as unknown as typeof execa);
+
+    const front = makeSourceJob(2, { output_format: "pdf-searchable" });
+    const back = makeSourceJob(2, { output_format: "pdf-searchable" });
+    const result = await assembleDuplex({ front_job_id: front, back_job_id: back }, ctx);
+    expect(result.state).toBe("completed");
+
+    const merged = readMergedManifest(result.run_dir!);
+    const pdfDoc = merged.documents.find((d) => path.extname(d.path) === ".pdf");
+    expect(pdfDoc?.ocr_confidence).toEqual(ocrConfidence);
+  });
+
   it("invokes the helper without --searchable when front output_format is pdf", async () => {
     const front = makeSourceJob(2, { output_format: "pdf" });
     const back = makeSourceJob(2, { output_format: "pdf" });

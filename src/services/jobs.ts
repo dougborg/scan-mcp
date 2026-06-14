@@ -20,13 +20,29 @@ export type StartScanResult = {
   state: "running" | "completed" | "cancelled" | "error";
 };
 
+// Per-page OCR confidence emitted by the Swift helper's searchable-PDF assembly.
+// Surfaced on a document so an agent can flag a low-confidence page for visual
+// verification instead of trusting the embedded text layer.
+export type PageOcrConfidence = {
+  page: number;
+  line_count: number;
+  mean_confidence: number;
+  min_confidence: number;
+};
+
 export type Manifest = {
   job_id: string;
   device_id: string | null;
   created_at: string;
   params: StartScanInput;
   pages: { index: number; path: string; sha256: string }[];
-  documents: { index: number; pages: number[]; path: string; sha256: string }[];
+  documents: {
+    index: number;
+    pages: number[];
+    path: string;
+    sha256: string;
+    ocr_confidence?: PageOcrConfidence[];
+  }[];
   state: "running" | "completed" | "cancelled" | "error";
   source_jobs?: {
     front: string;
