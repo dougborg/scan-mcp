@@ -184,6 +184,47 @@ final class SearchablePDFTests: XCTestCase {
         }
     }
 
+    func testSearchableReportsPerPageConfidence() throws {
+        let tiff = try makeTIFF(text: "Confidence Probe 12345")
+        defer { try? FileManager.default.removeItem(at: tiff) }
+
+        let outURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("test-\(UUID().uuidString).pdf")
+        defer { try? FileManager.default.removeItem(at: outURL) }
+
+        let confidences = try SearchablePDF.assemble(pageTIFFs: [tiff], outputURL: outURL, searchable: true).get()
+        XCTAssertEqual(confidences.count, 1)
+        XCTAssertEqual(confidences.first?.page, 1)
+        XCTAssertGreaterThan(confidences.first?.lineCount ?? 0, 0)
+        let mean = confidences.first?.meanConfidence ?? 0
+        XCTAssertGreaterThan(mean, 0.3, "clean synthetic text should clear the confidence floor")
+        XCTAssertLessThanOrEqual(mean, 1.0)
+
+        // Image-only output runs no OCR, so there is no confidence to report.
+        let none = try SearchablePDF.assemble(pageTIFFs: [tiff], outputURL: outURL, searchable: false).get()
+        XCTAssertTrue(none.isEmpty)
+    }
+
+    func testUnloadablePageFailsAssembly() throws {
+        // A page that can't be decoded must fail assembly, not be silently
+        // skipped — a dropped page would misalign output page numbers and the
+        // per-page confidence array from reality.
+        let bogus = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("not-an-image-\(UUID().uuidString).tiff")
+        try "not a tiff".write(to: bogus, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: bogus) }
+
+        let outURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("test-\(UUID().uuidString).pdf")
+        defer { try? FileManager.default.removeItem(at: outURL) }
+
+        let result = SearchablePDF.assemble(pageTIFFs: [bogus], outputURL: outURL, searchable: false)
+        switch result {
+        case .success: XCTFail("expected failure when a page cannot be loaded")
+        case .failure: break  // expected
+        }
+    }
+
     func testEmptyInputReturnsFailure() {
         let outURL = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("test-\(UUID().uuidString).pdf")

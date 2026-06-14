@@ -5,7 +5,7 @@ import { execa } from "execa";
 import type { AppContext } from "../context.js";
 import { resolveJobPath } from "./utils.js";
 import { resolveHelperPath } from "./helper-path.js";
-import { processPages, hashFile, type Manifest } from "./jobs.js";
+import { processPages, hashFile, type Manifest, type PageOcrConfidence } from "./jobs.js";
 
 export type AssembleDuplexInput = {
   front_job_id: string;
@@ -134,19 +134,20 @@ export async function assembleDuplex(
   if (fmt === "pdf" || fmt === "pdf-searchable") {
     const pdfPath = path.join(runDir, "doc_0001.pdf");
     const pageTiffs = manifest.pages.map((p) => p.path);
-    const pdfOk = await assemblePdfViaHelper({
+    const assembled = await assemblePdfViaHelper({
       pages: pageTiffs,
       output: pdfPath,
       searchable: fmt === "pdf-searchable",
       ctx,
       jobId: id,
     });
-    if (pdfOk) {
+    if (assembled.ok) {
       manifest.documents.push({
         index: manifest.documents.length + 1,
         pages: manifest.pages.map((p) => p.index),
         path: pdfPath,
         sha256: await hashFile(pdfPath),
+        ...(assembled.ocrConfidence ? { ocr_confidence: assembled.ocrConfidence } : {}),
       });
     } else {
       warnings.push(`PDF assembly failed; only TIFF output is available. See logs for details.`);
@@ -177,24 +178,39 @@ async function readManifest(runDir: string): Promise<Manifest | null> {
   }
 }
 
+type AssemblePdfOutcome = { ok: boolean; ocrConfidence?: PageOcrConfidence[] };
+
 async function assemblePdfViaHelper(args: {
   pages: string[];
   output: string;
   searchable: boolean;
   ctx: AppContext;
   jobId: string;
-}): Promise<boolean> {
+}): Promise<AssemblePdfOutcome> {
   const { pages, output, searchable, ctx, jobId } = args;
   const helper = resolveHelperPath(ctx.config);
   const cliArgs = ["assemble-pdf", "--output", output, ...(searchable ? ["--searchable"] : []), ...pages];
   try {
-    await execa(helper, cliArgs, { shell: false, timeout: 600_000 });
-    return true;
+    const { stdout } = await execa(helper, cliArgs, { shell: false, timeout: 600_000 });
+    // The helper prints a single-line JSON result; extract per-page OCR
+    // confidence if present (only emitted for searchable output).
+    const result = parseHelperResult(stdout);
+    return { ok: true, ocrConfidence: result?.ocr_confidence };
   } catch (err) {
     ctx.logger.warn(
       { jobId, helper, error: String(err), searchable, pageCount: pages.length },
       "assemble_duplex: helper assemble-pdf failed; falling back to TIFF-only output"
     );
-    return false;
+    return { ok: false };
+  }
+}
+
+function parseHelperResult(stdout: string): { ocr_confidence?: PageOcrConfidence[] } | undefined {
+  const line = stdout.trim().split(/\r?\n/).filter(Boolean).pop();
+  if (!line) return undefined;
+  try {
+    return JSON.parse(line) as { ocr_confidence?: PageOcrConfidence[] };
+  } catch {
+    return undefined;
   }
 }

@@ -29,12 +29,13 @@ struct AssemblePDF: ParsableCommand {
         )
 
         switch result {
-        case .success:
+        case .success(let confidences):
             JSONOut.line(AssemblePdfResult(
                 status: "ok",
                 output: output,
                 pages: pages.count,
-                searchable: searchable
+                searchable: searchable,
+                ocrConfidence: confidences.isEmpty ? nil : confidences
             ))
         case .failure(let err):
             FileHandle.standardError.write(Data("assemble-pdf: \(err.localizedDescription)\n".utf8))
@@ -48,4 +49,10 @@ private struct AssemblePdfResult: Encodable {
     let output: String
     let pages: Int
     let searchable: Bool
+    let ocrConfidence: [SearchablePDF.PageConfidence]?
+
+    enum CodingKeys: String, CodingKey {
+        case status, output, pages, searchable
+        case ocrConfidence = "ocr_confidence"
+    }
 }
