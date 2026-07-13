@@ -46,12 +46,26 @@ export type StartScanInput = {
   tmp_dir?: string;
 };
 
+// Per-page image metrics read off the scanned file by the backend (currently the
+// ICA/Swift helper). All optional — backends that can't measure omit them.
+export type PageMetrics = {
+  /** Pixel dimensions of the scanned page. */
+  width?: number;
+  height?: number;
+  /** Actual DPI the scanner produced (may differ from the requested resolution). */
+  dpi?: number;
+  /** Mean pixel brightness, 0.0 (black) .. 1.0 (white). Near 1.0 ⇒ blank page. */
+  mean_luminance?: number;
+  /** Which physical side this image came from, for ADF duplex jobs. */
+  side?: "front" | "back";
+};
+
 // Events emitted by a backend during runScan. jobs.ts forwards these to events.jsonl
 // so the backend stays decoupled from the persistence format.
 export type BackendEvent =
   | { type: "scanner_exec"; data: Record<string, unknown> }
   | { type: "scanner_failed"; data: Record<string, unknown> }
-  | { type: "page_scanned"; index: number; path: string }
+  | ({ type: "page_scanned"; index: number; path: string } & PageMetrics)
   | { type: "stage"; stage: "discovering" | "opening_session" | "scanning" | "finalizing" }
   | { type: "warning"; message: string };
 

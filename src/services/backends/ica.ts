@@ -96,11 +96,31 @@ export class IcaBackend implements Backend {
         for (const line of lines) {
           const trimmed = line.trim();
           if (!trimmed) continue;
-          const evt = parseJSON<{ type?: string; stage?: string; index?: number; path?: string; message?: string }>(trimmed);
+          const evt = parseJSON<{
+            type?: string;
+            stage?: string;
+            index?: number;
+            path?: string;
+            message?: string;
+            width?: number;
+            height?: number;
+            dpi?: number;
+            mean_luminance?: number;
+            side?: "front" | "back";
+          }>(trimmed);
           if (!evt || typeof evt.type !== "string") continue;
           if (evt.type === "page_scanned" && typeof evt.index === "number" && typeof evt.path === "string") {
             scannedCount++;
-            void onEvent({ type: "page_scanned", index: evt.index, path: evt.path });
+            void onEvent({
+              type: "page_scanned",
+              index: evt.index,
+              path: evt.path,
+              width: evt.width,
+              height: evt.height,
+              dpi: evt.dpi,
+              mean_luminance: evt.mean_luminance,
+              side: evt.side,
+            });
           } else if (evt.type === "stage" && typeof evt.stage === "string") {
             void onEvent({
               type: "stage",
