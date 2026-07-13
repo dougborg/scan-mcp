@@ -13,6 +13,7 @@
     "build": "tsc -p tsconfig.json && npm run build:helper",
     "build:ts": "tsc -p tsconfig.json",
     "build:helper": "bash scripts/build-helper.sh",
+    "build:sea": "bash scripts/build-sea.sh",
     "test:swift": "swift test --package-path swift-helper",
     "prepack": "npm run build",
     "pack:dry": "npm pack --dry-run --cache .npm-cache-pack",
@@ -30,7 +31,7 @@
     "scan-mcp": "bin/scan-mcp"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "*",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "ajv": "^8.17.1",
     "dotenv": "^17.2.1",
     "execa": "^9.6.0",
@@ -44,7 +45,9 @@
     "@types/node": "^24.2.1",
     "@types/uuid": "^10.0.0",
     "@vitest/coverage-v8": "^3.2.4",
+    "esbuild": "^0.28.1",
     "eslint": "^9.33.0",
+    "postject": "^1.0.0-alpha.6",
     "tsx": "^4.7.0",
     "typescript": "^5.9.2",
     "typescript-eslint": "^8.39.0",

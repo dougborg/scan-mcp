@@ -1,4 +1,4 @@
-import { promises as fs } from "fs";
+import { promises as fs, readFileSync, statSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { z } from "zod";
@@ -7,13 +7,27 @@ import type { AppContext } from "../context.js";
 import { startScanJob, getJobStatus, cancelJob, listJobs } from "../services/jobs.js";
 import { assembleDuplex } from "../services/duplex.js";
 import { resolveJobPath } from "../services/utils.js";
+import { isSea, getSeaAssetText } from "../sea.js";
 
-const currentDir = path.dirname(fileURLToPath(import.meta.url));
-// Resources are published at package root under resources/**; do not copy into dist.
-const orientationPath = path.resolve(currentDir, "../../resources/ORIENTATION.md");
 const orientationUri = "mcp://scan-mcp/orientation";
-const orientationText = await fs.readFile(orientationPath, "utf8");
-const orientationLastModified = (await fs.stat(orientationPath)).mtime.toISOString();
+
+// Load orientation synchronously (no top-level await) so this module bundles
+// cleanly into a CommonJS single-executable build. In a SEA the markdown is a
+// bundled asset; otherwise it lives at the package root under resources/**.
+function loadOrientation(): { text: string; lastModified: string } {
+  const seaText = isSea() ? getSeaAssetText("ORIENTATION.md") : undefined;
+  if (seaText !== undefined) {
+    return { text: seaText, lastModified: new Date().toISOString() };
+  }
+  const currentDir = path.dirname(fileURLToPath(import.meta.url));
+  const orientationPath = path.resolve(currentDir, "../../resources/ORIENTATION.md");
+  return {
+    text: readFileSync(orientationPath, "utf8"),
+    lastModified: statSync(orientationPath).mtime.toISOString(),
+  };
+}
+
+const { text: orientationText, lastModified: orientationLastModified } = loadOrientation();
 
 export function registerScanServer(server: McpServer, ctx: AppContext) {
 
@@ -162,7 +176,6 @@ export function registerScanServer(server: McpServer, ctx: AppContext) {
     {
       title: "scan-mcp Orientation",
       mimeType: "text/markdown",
-      text: orientationText,
       annotations: {
         audience: ["assistant"],
         priority: 1.0,
