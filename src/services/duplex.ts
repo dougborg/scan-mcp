@@ -112,10 +112,15 @@ export async function assembleDuplex(
   await fs.mkdir(runDir, { recursive: true });
 
   const params = { ...front.params, doc_break_policy: { type: "none" as const } };
+  const now = new Date().toISOString();
   const manifest: Manifest = {
     job_id: id,
     device_id: null,
-    created_at: new Date().toISOString(),
+    backend: ctx.backend.name,
+    created_at: now,
+    started_at: now,
+    // An assembled job has no live scan request; mirror the effective params.
+    requested_params: params,
     params,
     pages: [],
     documents: [],

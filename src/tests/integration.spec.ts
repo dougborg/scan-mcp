@@ -67,6 +67,17 @@ describe("integration tests", () => {
     expect(manifest.pages.length).toBeGreaterThan(0);
     expect(manifest.documents.length).toBeGreaterThan(0);
 
+    // Enriched manifest metadata for debuggability
+    expect(manifest.backend).toBe("mock");
+    expect(typeof manifest.started_at).toBe("string");
+    expect(typeof manifest.completed_at).toBe("string");
+    expect(typeof manifest.duration_ms).toBe("number");
+    expect(manifest.duration_ms).toBeGreaterThanOrEqual(0);
+    expect(manifest.requested_params).toEqual({});
+    expect(manifest.blank_page_count).toBe(0);
+    // Per-page byte size is recorded even when image metrics are unavailable
+    expect(typeof manifest.pages[0].bytes).toBe("number");
+
     // Verify job status
     const status = await getJobStatus(job_id, ctx);
     expect(status.job_id).toBe(job_id);

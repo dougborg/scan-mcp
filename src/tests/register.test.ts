@@ -60,10 +60,10 @@ describe("registerScanServer", () => {
     const server = new McpServer({ name: "scan-mcp", version }, { capabilities: { tools: {}, resources: {} } });
     registerScanServer(server, ctx);
     const internal = server as unknown as {
-      _registeredTools: Record<string, { callback: (args: unknown) => Promise<{ isError?: boolean; content: { type: string }[] }> }>;
+      _registeredTools: Record<string, { handler: (args: unknown) => Promise<{ isError?: boolean; content: { type: string }[] }> }>;
     };
     const tool = internal._registeredTools["get_manifest"];
-    const result = await tool.callback({ job_id: "job-00000000-0000-0000-0000-000000000000" });
+    const result = await tool.handler({ job_id: "job-00000000-0000-0000-0000-000000000000" });
     expect(result.isError).toBe(true);
     expect(result.content[0].type).toBe("text");
   });
@@ -72,9 +72,9 @@ describe("registerScanServer", () => {
     const server = new McpServer({ name: "scan-mcp", version: "0.1.0" }, { capabilities: { tools: {}, resources: {} } });
     registerScanServer(server, ctx);
     const internal = server as unknown as {
-      _registeredTools: Record<string, { callback: (args: unknown) => Promise<unknown> }>;
+      _registeredTools: Record<string, { handler: (args: unknown) => Promise<unknown> }>;
     };
     const tool = internal._registeredTools["get_manifest"];
-    await expect(tool.callback({ job_id: "../etc/passwd" })).rejects.toThrow();
+    await expect(tool.handler({ job_id: "../etc/passwd" })).rejects.toThrow();
   });
 });

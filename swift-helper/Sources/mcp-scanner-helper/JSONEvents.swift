@@ -10,6 +10,10 @@ enum JSONOut {
     private static let encoder: JSONEncoder = {
         let e = JSONEncoder()
         e.outputFormatting = []  // single-line, no pretty-print
+        // camelCase Swift properties -> snake_case JSON keys (e.g. meanLuminance
+        // -> mean_luminance) to match the TS-side event parser. Existing keys are
+        // all single words, so this is a no-op for them.
+        e.keyEncodingStrategy = .convertToSnakeCase
         return e
     }()
 
@@ -46,13 +50,25 @@ struct ScanEvent: Encodable {
     let message: String?
     let data: [String: AnyEncodable]?
 
+    // Optional per-page metrics (page_scanned only). Nil fields are omitted.
+    let width: Int?
+    let height: Int?
+    let dpi: Int?
+    let meanLuminance: Double?
+    let side: String?
+
     private init(
         type: String,
         stage: String? = nil,
         index: Int? = nil,
         path: String? = nil,
         message: String? = nil,
-        data: [String: AnyEncodable]? = nil
+        data: [String: AnyEncodable]? = nil,
+        width: Int? = nil,
+        height: Int? = nil,
+        dpi: Int? = nil,
+        meanLuminance: Double? = nil,
+        side: String? = nil
     ) {
         self.type = type
         self.timestamp = JSONOut.iso8601.string(from: Date())
@@ -61,13 +77,35 @@ struct ScanEvent: Encodable {
         self.path = path
         self.message = message
         self.data = data
+        self.width = width
+        self.height = height
+        self.dpi = dpi
+        self.meanLuminance = meanLuminance
+        self.side = side
     }
 
     static func stage(_ name: String) -> ScanEvent {
         ScanEvent(type: "stage", stage: name)
     }
-    static func pageScanned(index: Int, path: String) -> ScanEvent {
-        ScanEvent(type: "page_scanned", index: index, path: path)
+    static func pageScanned(
+        index: Int,
+        path: String,
+        width: Int? = nil,
+        height: Int? = nil,
+        dpi: Int? = nil,
+        meanLuminance: Double? = nil,
+        side: String? = nil
+    ) -> ScanEvent {
+        ScanEvent(
+            type: "page_scanned",
+            index: index,
+            path: path,
+            width: width,
+            height: height,
+            dpi: dpi,
+            meanLuminance: meanLuminance,
+            side: side
+        )
     }
     static func warning(_ message: String) -> ScanEvent {
         ScanEvent(type: "warning", message: message)

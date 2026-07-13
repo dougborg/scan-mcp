@@ -18,6 +18,7 @@ final class ScannerController: NSObject, @preconcurrency ICScannerDeviceDelegate
     private var sessionOpened = false
 
     private var wantsADF: Bool { params.source?.wantsADF ?? false }
+    private var duplexEnabled: Bool { (params.duplex ?? false) || (params.source?.wantsDuplex ?? false) }
 
     init(scanner: ICScannerDevice, params: ScanParams, outDir: URL, emitEvents: Bool) {
         self.scanner = scanner
@@ -111,7 +112,18 @@ final class ScannerController: NSObject, @preconcurrency ICScannerDeviceDelegate
             try FileManager.default.moveItem(at: url, to: dest)
             scannedURLs.append(dest)
             if emitEvents {
-                JSONOut.line(ScanEvent.pageScanned(index: pageCounter, path: dest.path))
+                let metrics = computeImageMetrics(url: dest)
+                // ADF duplex delivers pages front, back, front, back, ...
+                let side = duplexEnabled ? (pageCounter % 2 == 1 ? "front" : "back") : nil
+                JSONOut.line(ScanEvent.pageScanned(
+                    index: pageCounter,
+                    path: dest.path,
+                    width: metrics?.width,
+                    height: metrics?.height,
+                    dpi: metrics?.dpi,
+                    meanLuminance: metrics?.meanLuminance,
+                    side: side
+                ))
             }
         } catch {
             JSONOut.diagnostic("warning: failed to move page \(pageCounter): \(error.localizedDescription)")

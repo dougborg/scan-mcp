@@ -5,10 +5,11 @@ import { v4 as uuidv4 } from "uuid";
 import { execa } from "execa";
 import type { AppContext } from "../context.js";
 import type { AppConfig } from "../config.js";
-import { DEFAULT_RESOLUTION_DPI } from "../constants.js";
+import { DEFAULT_RESOLUTION_DPI, BLANK_LUMINANCE_THRESHOLD } from "../constants.js";
 import { selectDevice } from "./select.js";
 import { tailTextFile, resolveJobPath } from "./utils.js";
-import type { BackendEvent, StartScanInput } from "./backends/backend.js";
+import { readTiffInfo } from "./tiff-info.js";
+import type { BackendEvent, PageMetrics, StartScanInput } from "./backends/backend.js";
 
 export type { StartScanInput } from "./backends/backend.js";
 
@@ -30,12 +31,38 @@ export type PageOcrConfidence = {
   min_confidence: number;
 };
 
+// A scanned page plus whatever we could measure about it. Metrics are best-effort:
+// the ICA/Swift helper supplies dimensions/DPI/luminance/side; anything missing is
+// backfilled from the TIFF header. `blank` is derived from `mean_luminance` and is
+// the primary signal for "the feeder pulled an empty or blank-backed sheet".
+export type PageEntry = {
+  index: number;
+  path: string;
+  sha256: string;
+  bytes?: number;
+  width?: number;
+  height?: number;
+  dpi?: number;
+  mean_luminance?: number;
+  blank?: boolean;
+  side?: "front" | "back";
+  bits_per_sample?: number;
+  compression?: string;
+};
+
 export type Manifest = {
   job_id: string;
   device_id: string | null;
+  backend: "sane" | "ica" | "mock";
   created_at: string;
+  started_at: string;
+  completed_at?: string;
+  duration_ms?: number;
+  /** Exactly what the caller passed to start_scan_job, before auto-selection. */
+  requested_params: StartScanInput;
+  /** Effective params after device auto-selection and defaults were applied. */
   params: StartScanInput;
-  pages: { index: number; path: string; sha256: string }[];
+  pages: PageEntry[];
   documents: {
     index: number;
     pages: number[];
@@ -43,6 +70,12 @@ export type Manifest = {
     sha256: string;
     ocr_confidence?: PageOcrConfidence[];
   }[];
+  /** Number of pages that scanned blank (near-white) — a quick feeder sanity check. */
+  blank_page_count?: number;
+  /** Warnings surfaced by the backend during the job (e.g. "ADF out of paper"). */
+  warnings?: string[];
+  /** Failure detail when state is "error". */
+  error?: string;
   state: "running" | "completed" | "cancelled" | "error";
   source_jobs?: {
     front: string;
@@ -50,6 +83,18 @@ export type Manifest = {
     back_order: "reversed" | "natural";
   };
 };
+
+// Mutable data gathered from backend events during a run, folded into the
+// manifest once scanning finishes.
+type JobCollector = {
+  warnings: string[];
+  error?: string;
+  pageMetrics: Map<number, PageMetrics>;
+};
+
+function newJobCollector(): JobCollector {
+  return { warnings: [], pageMetrics: new Map() };
+}
 
 async function initializeJob(input: StartScanInput, ctx: AppContext): Promise<{ runDir: string; manifest: Manifest; eventsPath: string }> {
   const effective = await resolveEffectiveInput(input, ctx);
@@ -64,7 +109,10 @@ async function initializeJob(input: StartScanInput, ctx: AppContext): Promise<{ 
   const manifest: Manifest = {
     job_id: id,
     device_id: effective.device_id ?? null,
+    backend: ctx.backend.name,
     created_at: now,
+    started_at: now,
+    requested_params: input,
     params: effective,
     pages: [],
     documents: [],
@@ -76,7 +124,13 @@ async function initializeJob(input: StartScanInput, ctx: AppContext): Promise<{ 
   return { runDir, manifest, eventsPath };
 }
 
-async function runScan(runDir: string, manifest: Manifest, eventsPath: string, ctx: AppContext): Promise<boolean> {
+async function runScan(
+  runDir: string,
+  manifest: Manifest,
+  eventsPath: string,
+  ctx: AppContext,
+  collector: JobCollector
+): Promise<boolean> {
   const controller = new AbortController();
   activeJobs.set(manifest.job_id, controller);
   try {
@@ -87,6 +141,20 @@ async function runScan(runDir: string, manifest: Manifest, eventsPath: string, c
       signal: controller.signal,
       onEvent: async (evt: BackendEvent) => {
         await appendEvent(eventsPath, { ts: new Date().toISOString(), ...evt });
+        if (evt.type === "warning") {
+          collector.warnings.push(evt.message);
+        } else if (evt.type === "scanner_failed") {
+          const detail = evt.data?.lastError ?? evt.data?.error;
+          if (detail) collector.error = String(detail);
+        } else if (evt.type === "page_scanned") {
+          collector.pageMetrics.set(evt.index, {
+            width: evt.width,
+            height: evt.height,
+            dpi: evt.dpi,
+            mean_luminance: evt.mean_luminance,
+            side: evt.side,
+          });
+        }
       },
     });
 
@@ -110,7 +178,8 @@ export async function processPages(
   runDir: string,
   manifest: Manifest,
   ctx: AppContext,
-  sourcePagePaths?: readonly string[]
+  sourcePagePaths?: readonly string[],
+  collector?: JobCollector
 ) {
   const { config } = ctx;
   let pageFiles: string[];
@@ -121,11 +190,15 @@ export async function processPages(
     const entries = await fs.readdir(runDir);
     pageFiles = entries.filter((f) => f.startsWith("page_") && f.endsWith(".tiff")).sort();
   }
+  let blankCount = 0;
   for (let idx = 0; idx < pageFiles.length; idx++) {
     const f = pageFiles[idx];
     const p = path.join(runDir, f);
-    manifest.pages.push({ index: idx + 1, path: p, sha256: await hashFile(p) });
+    const entry = await buildPageEntry(idx + 1, p, collector?.pageMetrics.get(idx + 1));
+    if (entry.blank) blankCount++;
+    manifest.pages.push(entry);
   }
+  if (manifest.pages.length > 0) manifest.blank_page_count = blankCount;
 
   const segments = segmentPages(manifest.pages.map((p) => p.index), manifest.params.doc_break_policy);
   let docIdx = 1;
@@ -143,23 +216,34 @@ async function updateManifest(runDir: string, manifest: Manifest) {
   await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2));
 }
 
+function finalizeTiming(manifest: Manifest) {
+  const completedAt = new Date();
+  manifest.completed_at = completedAt.toISOString();
+  manifest.duration_ms = completedAt.getTime() - new Date(manifest.started_at).getTime();
+}
+
 export async function startScanJob(input: StartScanInput, ctx: AppContext): Promise<StartScanResult> {
   const { logger, config } = ctx;
   logger.debug({ input }, "start scan job");
   const { runDir, manifest, eventsPath } = await initializeJob(input, ctx);
+  const collector = newJobCollector();
 
-  const scanSuccessful = await runScan(runDir, manifest, eventsPath, ctx);
+  const scanSuccessful = await runScan(runDir, manifest, eventsPath, ctx, collector);
+  if (collector.warnings.length > 0) manifest.warnings = collector.warnings;
 
   if (!scanSuccessful) {
     manifest.state = "error";
+    manifest.error = collector.error ?? "all candidates failed";
+    finalizeTiming(manifest);
     await updateManifest(runDir, manifest);
-    await appendEvent(eventsPath, { ts: new Date().toISOString(), type: "job_error", data: { reason: "all candidates failed" } });
+    await appendEvent(eventsPath, { ts: new Date().toISOString(), type: "job_error", data: { reason: manifest.error } });
     return { job_id: manifest.job_id, run_dir: runDir, state: manifest.state };
   }
 
-  await processPages(runDir, manifest, ctx);
+  await processPages(runDir, manifest, ctx, undefined, collector);
 
   manifest.state = "completed";
+  finalizeTiming(manifest);
   await updateManifest(runDir, manifest);
   await appendEvent(eventsPath, { ts: new Date().toISOString(), type: "job_completed" });
   if (config.PERSIST_LAST_USED_DEVICE && manifest.device_id) {
@@ -273,6 +357,32 @@ export async function hashFile(p: string): Promise<string> {
   const h = crypto.createHash("sha256");
   h.update(await fs.readFile(p));
   return h.digest("hex");
+}
+
+// Assemble the full manifest entry for one scanned page: hash + byte size, the
+// backend's image metrics where available, TIFF-header dimensions as a fallback,
+// and a derived blank flag.
+async function buildPageEntry(index: number, p: string, metrics?: PageMetrics): Promise<PageEntry> {
+  const [sha256, bytes, tiff] = await Promise.all([
+    hashFile(p),
+    fs.stat(p).then((s) => s.size).catch(() => undefined),
+    readTiffInfo(p),
+  ]);
+  const mean = metrics?.mean_luminance;
+  return {
+    index,
+    path: p,
+    sha256,
+    bytes,
+    width: metrics?.width ?? tiff.width,
+    height: metrics?.height ?? tiff.height,
+    dpi: metrics?.dpi,
+    mean_luminance: mean,
+    blank: mean === undefined ? undefined : mean >= BLANK_LUMINANCE_THRESHOLD,
+    side: metrics?.side,
+    bits_per_sample: tiff.bits_per_sample,
+    compression: tiff.compression,
+  };
 }
 
 async function appendEvent(eventsPath: string, evt: Record<string, unknown>) {

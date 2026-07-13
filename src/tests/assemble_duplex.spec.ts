@@ -60,10 +60,14 @@ describe("assembleDuplex", () => {
       fs.writeFileSync(p, `PAGE_${id}_${i}`);
       pages.push({ index: i, path: p, sha256: `fake-sha-${i}` });
     }
+    const now = new Date().toISOString();
     const manifest: Manifest = {
       job_id: id,
       device_id: null,
-      created_at: new Date().toISOString(),
+      backend: "mock",
+      created_at: now,
+      started_at: now,
+      requested_params: { output_format: opts.output_format ?? "tiff" },
       params: { output_format: opts.output_format ?? "tiff" },
       pages,
       documents: [],

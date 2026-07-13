@@ -153,14 +153,17 @@ describe("last-used device persistence (mock)", () => {
 
     const testConfig: AppConfig = {
       ...config,
-      INBOX_DIR: path.join(tmp, "inbox"),
+      // Nest INBOX_DIR two levels deep so the persisted state dir
+      // (INBOX_DIR/../../.state) lands inside this unique tmp dir rather than
+      // a shared src/.state path that races with other parallel test files.
+      INBOX_DIR: path.join(tmp, "runs", "inbox"),
       PERSIST_LAST_USED_DEVICE: true,
     };
     const backend = new MockBackend();
     const testCtx: AppContext = { config: testConfig, logger, backend };
 
     await startScanJob({}, testCtx);
-    const statePath = path.join(tmp, "..", ".state", "scan-mcp.json");
+    const statePath = path.join(tmp, ".state", "scan-mcp.json");
     expect(fs.existsSync(statePath)).toBe(true);
     const j = JSON.parse(fs.readFileSync(statePath, "utf8"));
     expect(typeof j.device_id).toBe("string");
