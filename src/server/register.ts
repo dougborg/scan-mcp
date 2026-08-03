@@ -39,7 +39,13 @@ export function registerScanServer(server: McpServer, ctx: AppContext) {
     device_id: nullToUndef(z.string()),
     resolution_dpi: nullToUndef(z.number().int()),
     // Allow any string; devices may expose Halftone, Binary, Gray16, etc.
-    color_mode: nullToUndef(z.string()),
+    color_mode: nullToUndef(
+      z
+        .string()
+        .describe(
+          "color_mode defaults to Lineart (document-first); at >= 600dpi it defaults to Color, since high-dpi capture usually means artwork/photos where 1-bit destroys information. Pass color_mode explicitly to override either default; high dpi is the only signal used."
+        )
+    ),
     source: nullToUndef(z.enum(["Flatbed", "ADF", "ADF Duplex"])),
     duplex: nullToUndef(z.boolean()),
     page_size: nullToUndef(z.enum(["Letter", "A4", "Legal", "Custom"])),

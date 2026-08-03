@@ -11,7 +11,13 @@ Purpose: Give an LLM concise, actionable context for initiating and managing sca
 
 ## Core Defaults (when user gives no specifics)
 - Resolution: 300 dpi (probes support; otherwise picks nearest available).
-- Color mode: Lineart (fallback order: Lineart → Gray → Halftone → Color).
+- Color mode: `color_mode` defaults to Lineart (document-first); at >= 600dpi it defaults to
+  Color, since high-dpi capture usually means artwork/photos where 1-bit destroys information.
+  Below 600dpi: fallback order Lineart → Gray → Halftone → Color. At/above 600dpi: fallback order
+  Color → Gray → Halftone → Lineart. Pass `color_mode` explicitly to override either default —
+  high dpi is the only signal used, so a 300dpi color photo still needs an explicit
+  `color_mode: "Color"`, and a 600dpi document you deliberately want in 1-bit needs an explicit
+  `color_mode: "Lineart"`.
 - Source: ADF Duplex (fallback order: ADF Duplex → ADF → Flatbed).
 - Page size: None (scanner/backend default) (no `-x`/`-y` unless the user sets `page_size`).
 - Output: Batched TIFF pages named `page_%04d.tiff` in the job’s `run_dir`.
@@ -31,7 +37,10 @@ These defaults are applied after device/capabilities are known. If the user supp
 Inputs for `start_scan_job` (all optional unless specified):
 - `device_id`: Pick a specific scanner; otherwise auto-select.
 - `resolution_dpi`: Desired dpi (default target 300).
-- `color_mode`: e.g., `Lineart`, `Gray`, `Halftone`, `Color`.
+- `color_mode`: e.g., `Lineart`, `Gray`, `Halftone`, `Color`. color_mode defaults to Lineart
+  (document-first); at >= 600dpi it defaults to Color, since high-dpi capture usually means
+  artwork/photos where 1-bit destroys information. Pass color_mode explicitly to override either
+  default; high dpi is the only signal used.
 - `source`: `Flatbed` | `ADF` | `ADF Duplex`.
 - `duplex`: boolean; if `true` and device supports `ADF Duplex`, it is preferred.
 - `page_size`: `Letter` | `A4` | `Legal` | `Custom` (+ `custom_size_mm`).

@@ -8,7 +8,11 @@
   "properties": {
     "device_id": { "type": "string" },
     "resolution_dpi": { "type": "integer", "minimum": 50, "maximum": 1200 },
-    "color_mode": { "type": "string", "enum": ["Color", "Gray", "Lineart"] },
+    "color_mode": {
+      "type": "string",
+      "enum": ["Color", "Gray", "Lineart"],
+      "description": "color_mode defaults to Lineart (document-first); at >= 600dpi it defaults to Color, since high-dpi capture usually means artwork/photos where 1-bit destroys information. Pass color_mode explicitly to override either default; high dpi is the only signal used."
+    },
     "source": { "type": "string", "enum": ["Flatbed", "ADF", "ADF Duplex"] },
     "duplex": { "type": "boolean" },
     "page_size": { "type": "string", "enum": ["Letter", "A4", "Legal", "Custom"] },
