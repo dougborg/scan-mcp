@@ -43,3 +43,17 @@ This package uses a minimal Node.js + TypeScript stack. Key conventions:
 
 ## Development workflow
 - Run `make verify` before opening a pull request.
+
+## Scanner backends
+
+Device discovery, options, and capture go through `AppContext.backend` (`sane`,
+`ica`, or `mock`). Preserve SANE source mapping, carrier-sheet derivatives, and
+resolution-dependent color defaults when modifying the shared job pipeline.
+The native helper runs on macOS 15+ with Swift 6 strict concurrency. Its ICA
+callbacks must stay on the main actor; tests under `swift-helper/Tests` require
+no scanner hardware. `npm run test:swift` runs them with full Xcode.
+
+A backend must await its asynchronous event writes before declaring completion.
+Assembly errors must fail the job while preserving raw pages, never substitute
+one page for a complete document. Run TypeScript and Swift contract tests when
+changing helper JSON. Keep helper attribution/license files in the npm payload.
