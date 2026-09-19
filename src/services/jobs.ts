@@ -13,7 +13,7 @@ import { detectCarrierSheet, cropCarrierSheet } from "./carrier.js";
 
 import { resolveJobPath } from "./utils.js";
 
-const activeJobs = new Map<string, AbortController>();
+const activeJobs = new Map<string, { controller: AbortController; state: Manifest["state"] }>();
 
 export type StartScanResult = {
   job_id: string;
@@ -159,31 +159,43 @@ export async function startScanJob(input: StartScanInput, ctx: AppContext): Prom
   const { runDir, manifest, eventsPath } = await initializeJob(input, ctx);
 
   const controller = new AbortController();
-  activeJobs.set(manifest.job_id, controller);
+  const active: { controller: AbortController; state: Manifest["state"] } = { controller, state: "running" };
+  activeJobs.set(manifest.job_id, active);
   try {
-    await updateManifest(runDir, manifest);
-    const result = await ctx.backend.runScan({
-      input: manifest.params, runDir, ctx, signal: controller.signal,
-      onEvent: async (event) => appendEvent(eventsPath, { ts: new Date().toISOString(), ...event }),
-    });
-    controller.signal.throwIfAborted();
-    if (!result.ran) throw new Error("Scanner failed to capture pages");
-    await processPages(runDir, manifest, ctx, eventsPath, controller.signal);
-    controller.signal.throwIfAborted();
-    manifest.state = "completed";
-    if (config.PERSIST_LAST_USED_DEVICE && manifest.device_id) {
-      await saveLastUsedDevice(manifest.device_id, config);
+    let failure: string | undefined;
+    try {
+      await updateManifest(runDir, manifest);
+      controller.signal.throwIfAborted();
+      const result = await ctx.backend.runScan({
+        input: manifest.params, runDir, ctx, signal: controller.signal,
+        onEvent: async (event) => appendEvent(eventsPath, { ts: new Date().toISOString(), ...event }),
+      });
+      controller.signal.throwIfAborted();
+      if (!result.ran) throw new Error("Scanner failed to capture pages");
+      await processPages(runDir, manifest, ctx, eventsPath, controller.signal);
+      controller.signal.throwIfAborted();
+      if (config.PERSIST_LAST_USED_DEVICE && manifest.device_id) {
+        await saveLastUsedDevice(manifest.device_id, config);
+      }
+      controller.signal.throwIfAborted();
+      manifest.state = "completed";
+    } catch (error) {
+      manifest.state = controller.signal.aborted ? "cancelled" : "error";
+      failure = String(error);
+      logger.error({ jobId: manifest.job_id, error: failure }, "scan job did not complete");
     }
-  } catch (error) {
-    manifest.state = controller.signal.aborted ? "cancelled" : "error";
-    await appendEvent(eventsPath, { ts: new Date().toISOString(), type: "job_" + manifest.state, data: { reason: String(error) } });
-    logger.error({ jobId: manifest.job_id, error: String(error) }, "scan job did not complete");
+    // Commit the outcome synchronously before any final I/O. Keep the entry until
+    // persistence finishes so late cancellation cannot race a stale running manifest.
+    active.state = manifest.state;
+    await updateManifest(runDir, manifest);
+    await appendEvent(eventsPath, {
+      ts: new Date().toISOString(), type: "job_" + manifest.state,
+      ...(failure === undefined ? {} : { data: { reason: failure } }),
+    });
+    return { job_id: manifest.job_id, run_dir: runDir, state: manifest.state };
   } finally {
     activeJobs.delete(manifest.job_id);
   }
-  await updateManifest(runDir, manifest);
-  if (manifest.state === "completed") await appendEvent(eventsPath, { ts: new Date().toISOString(), type: "job_completed" });
-  return { job_id: manifest.job_id, run_dir: runDir, state: manifest.state };
 }
 
 export async function getJobStatus(jobId: string, ctx: AppContext, baseDir?: string) {
@@ -204,9 +216,10 @@ export async function cancelJob(jobId: string, ctx: AppContext, baseDir?: string
   const { logger } = ctx;
   const runDir = resolveJobPath(jobId, baseDir ?? ctx.config.INBOX_DIR);
 
-  // Terminate the running process, if it exists
-  if (activeJobs.has(jobId)) {
-    activeJobs.get(jobId)?.abort();
+  const active = activeJobs.get(jobId);
+  if (active) {
+    if (active.state !== "running") return terminalCancellationResult(active.state);
+    active.controller.abort();
     return { ok: true } as const;
   }
 
@@ -214,11 +227,18 @@ export async function cancelJob(jobId: string, ctx: AppContext, baseDir?: string
   const manifestPath = path.join(runDir, "manifest.json");
   if (!(await fileExists(manifestPath))) return { ok: false, error: "manifest not found" } as const;
   const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8"));
+  if (manifest.state !== "running") return terminalCancellationResult(manifest.state);
   manifest.state = "cancelled";
   await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2));
   await appendEvent(path.join(runDir, "events.jsonl"), { ts: new Date().toISOString(), type: "job_cancelled" });
   logger.debug({ jobId }, "scan job cancelled");
   return { ok: true } as const;
+}
+
+function terminalCancellationResult(state: string) {
+  return state === "cancelled"
+    ? { ok: true } as const
+    : { ok: false, error: `job is already ${state}` } as const;
 }
 
 export type JobInfo = {

@@ -12,7 +12,13 @@ if (args[0] === 'list-devices') {
 } else if (args[0] === 'assemble-tiff') {
   const output = option('--output');
   const pages = args.slice(args.indexOf('--output') + 2);
-  fs.writeFileSync(output, pages.map(p => fs.readFileSync(p, 'utf8')).join('|'));
+  const contents = pages.map(p => fs.readFileSync(p, 'utf8'));
+  if (contents.includes('WAIT_FOR_ASSEMBLY_ABORT')) {
+    fs.writeFileSync(output + '.pid', String(process.pid));
+    setInterval(() => {}, 1000);
+  } else {
+    fs.writeFileSync(output, contents.join('|'));
+  }
 } else if (args[0] === 'scan') {
   const params = JSON.parse(option('--params'));
   const scenario = params.device_id;
@@ -27,7 +33,7 @@ if (args[0] === 'list-devices') {
     setInterval(() => {}, 1000);
   } else {
     for (const [i, page] of pages.entries()) {
-      fs.writeFileSync(page, `PAGE_${i + 1}`);
+      fs.writeFileSync(page, scenario === 'assembly-wait' ? 'WAIT_FOR_ASSEMBLY_ABORT' : `PAGE_${i + 1}`);
       events.push({ type: 'page_scanned', index: i + 1, path: page });
     }
     if (scenario !== 'no-complete') events.push({ type: 'complete', pages: scenario === 'mismatch' ? [pages[0]] : pages });

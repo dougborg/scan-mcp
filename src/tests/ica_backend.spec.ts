@@ -65,6 +65,17 @@ describe("ICA subprocess contract", () => {
     }, running.signal)).rejects.toThrow();
   });
 
+  it("never launches the helper if cancelled during event persistence", async () => {
+    const controller = new AbortController();
+    const events: BackendEvent[] = [];
+    await expect(scan("test", async event => {
+      events.push(event);
+      if (event.type === "scanner_exec") controller.abort();
+    }, controller.signal)).rejects.toThrow();
+    expect(events.map(event => event.type)).toEqual(["scanner_exec"]);
+    expect(await fs.readdir(dir)).toEqual([]);
+  });
+
   it("rejects unsupported formats and custom dimensions before capture", async () => {
     for (const input of [{ output_format: "pdf" }, { page_size: "Custom" as const }, { custom_size_mm: { width: 10, height: 10 } }]) {
       const onEvent = vi.fn();
@@ -99,6 +110,32 @@ describe("ICA job integration", () => {
     const result = await startScanJob({ device_id: "test" }, ctx);
     expect(result.state).toBe("error");
     expect(await getJobStatus(result.job_id, ctx)).toMatchObject({ state: "error", pages: 2, documents: 0 });
+  });
+
+  it("cancels and reaps the native assembler while preserving captured pages", async () => {
+    const pending = startScanJob({ device_id: "assembly-wait", doc_break_policy: { type: "page_count", page_count: 1 } }, ctx);
+    let jobId: string | undefined;
+    let pid = 0;
+    try {
+      await vi.waitFor(async () => {
+        [jobId] = await fs.readdir(dir);
+        expect(jobId).toBeDefined();
+        pid = Number(await fs.readFile(path.join(dir, jobId!, "doc_0001.tiff.pid"), "utf8"));
+        expect(pid).toBeGreaterThan(0);
+      }, { timeout: 3000 });
+      expect(await cancelJob(jobId!, ctx)).toEqual({ ok: true });
+    } finally {
+      if (jobId) await cancelJob(jobId, ctx);
+      await pending;
+    }
+    const result = await pending;
+    expect(result.state).toBe("cancelled");
+    expect(await getJobStatus(result.job_id, ctx)).toMatchObject({ state: "cancelled", pages: 2, documents: 0 });
+    expect(() => process.kill(pid, 0)).toThrow();
+    expect(await fs.readFile(path.join(result.run_dir, "page_0001.tiff"), "utf8")).toBe("WAIT_FOR_ASSEMBLY_ABORT");
+    expect((await fs.readdir(result.run_dir)).filter(file => /^doc_.*\.tiff$/.test(file))).toEqual([]);
+    const events = (await fs.readFile(path.join(result.run_dir, "events.jsonl"), "utf8")).trim().split("\n").map(line => JSON.parse(line).type);
+    expect(events.filter(type => ["job_completed", "job_error", "job_cancelled"].includes(type))).toEqual(["job_cancelled"]);
   });
 
   it("keeps cancellation terminal and exposes a running manifest", async () => {

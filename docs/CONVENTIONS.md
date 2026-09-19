@@ -57,3 +57,8 @@ A backend must await its asynchronous event writes before declaring completion.
 Assembly errors must fail the job while preserving raw pages, never substitute
 one page for a complete document. Run TypeScript and Swift contract tests when
 changing helper JSON. Keep helper attribution/license files in the npm payload.
+
+Cancellation tests should control asynchronous boundaries with explicit gates and
+exercise real child-process termination. Once a terminal job outcome is chosen,
+keep it immutable while persisting its manifest and event; never acknowledge a
+late cancellation that completion will overwrite.

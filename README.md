@@ -153,7 +153,7 @@ check before release.
     - `job_id` (string)
 
 - **cancel_job**
-  - Request job cancellation; best effort during scan loops.
+  - Request cancellation during capture or assembly. Completed and failed jobs reject cancellation; repeated cancellation of a cancelled job is harmless.
   - Inputs:
     - `job_id` (string)
 
