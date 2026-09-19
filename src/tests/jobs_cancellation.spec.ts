@@ -91,17 +91,20 @@ describe("job cancellation boundaries", () => {
     expect(await events(job.run_dir)).toEqual(["job_started", "job_error"]);
   });
 
-  it("rejects cancellation while a failed outcome is being persisted", async () => {
-    const gate = blockWrite((file, data) => file.endsWith("manifest.json") && JSON.parse(data).state === "error");
-    vi.spyOn(ctx.backend, "runScan").mockRejectedValue(new Error("paper jam"));
+  it.each(["error", "cancelled"] as const)("preserves a %s outcome while its manifest is pending", async state => {
+    const gate = blockWrite((file, data) => file.endsWith("manifest.json") && JSON.parse(data).state === state);
+    vi.spyOn(ctx.backend, "runScan").mockImplementation(async ({ runDir }) => {
+      if (state === "cancelled") await cancelJob(path.basename(runDir), ctx);
+      throw new Error("scan stopped");
+    });
     const pending = startScanJob({ device_id: "test" }, ctx);
     try {
       const manifestPath = await gate.entered;
-      expect(await cancelJob(path.basename(path.dirname(manifestPath)), ctx)).toEqual({ ok: false, error: "job is already error" });
+      expect(await cancelJob(path.basename(path.dirname(manifestPath)), ctx)).toEqual(state === "cancelled" ? { ok: true } : { ok: false, error: "job is already error" });
     } finally { gate.release(); await pending; }
     const job = await pending;
-    expect(await getJobStatus(job.job_id, ctx)).toMatchObject({ state: "error" });
-    expect(await events(job.run_dir)).toEqual(["job_started", "job_error"]);
+    expect(await getJobStatus(job.job_id, ctx)).toMatchObject({ state });
+    expect(await events(job.run_dir)).toEqual(["job_started", "job_" + state]);
   });
 
   it("can cancel a running manifest left by a previous server process", async () => {
