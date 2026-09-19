@@ -2,6 +2,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { promises as fs } from "fs";
 import os from "os";
 import path from "path";
+import crypto from "crypto";
 import type { Logger } from "pino";
 import type { AppContext } from "../context.js";
 import { ConfigSchema } from "../config.js";
@@ -36,6 +37,34 @@ async function events(runDir: string): Promise<string[]> {
 }
 
 describe("job cancellation boundaries", () => {
+  it.each(["cancelled", "error", "completed"] as const)("records confirmed pages when capture ends as %s", async state => {
+    const contents = "CAPTURED_TIFF_PAGE";
+    let runningStatus: Awaited<ReturnType<typeof getJobStatus>> | undefined;
+    vi.spyOn(ctx.backend, "runScan").mockImplementation(async ({ runDir, onEvent, signal }) => {
+      const pagePath = path.join(runDir, "page_0001.tiff");
+      await fs.writeFile(pagePath, contents);
+      await onEvent({ type: "page_scanned", index: 1, path: pagePath });
+      runningStatus = await getJobStatus(path.basename(runDir), ctx);
+      if (state === "cancelled") {
+        await cancelJob(path.basename(runDir), ctx);
+        signal.throwIfAborted();
+      }
+      if (state === "error") throw new Error("scanner disconnected after first page");
+      return { ran: true };
+    });
+    const job = await startScanJob({ device_id: "test" }, ctx);
+    expect(runningStatus).toMatchObject({ state: "running", pages: 1 });
+    expect(job.state).toBe(state);
+    expect(await getJobStatus(job.job_id, ctx)).toMatchObject({ state, pages: 1, documents: state === "completed" ? 1 : 0 });
+    const manifest = JSON.parse(await fs.readFile(path.join(job.run_dir, "manifest.json"), "utf8"));
+    expect(manifest.pages).toEqual([{
+      index: 1, path: path.join(job.run_dir, "page_0001.tiff"),
+      sha256: crypto.createHash("sha256").update(contents).digest("hex"),
+    }]);
+    expect(await fs.readFile(manifest.pages[0].path, "utf8")).toBe(contents);
+    expect((await events(job.run_dir)).filter(type => ["job_completed", "job_cancelled", "job_error"].includes(type))).toEqual(["job_" + state]);
+  });
+
   it("honors cancellation while the initial manifest is being written", async () => {
     const gate = blockWrite((file, data) => file.endsWith("manifest.json") && JSON.parse(data).state === "running");
     const capture = vi.spyOn(ctx.backend, "runScan");
@@ -49,6 +78,26 @@ describe("job cancellation boundaries", () => {
     expect(job.state).toBe("cancelled");
     expect(await getJobStatus(job.job_id, ctx)).toMatchObject({ state: "cancelled", pages: 0, documents: 0 });
     expect(await events(job.run_dir)).toEqual(["job_started", "job_cancelled"]);
+  });
+
+  it("retains a confirmed page when cancelled during its manifest write", async () => {
+    const gate = blockWrite((file, data) => file.endsWith("manifest.json") && JSON.parse(data).state === "running" && JSON.parse(data).pages.length === 1);
+    vi.spyOn(ctx.backend, "runScan").mockImplementation(async ({ runDir, onEvent, signal }) => {
+      const pagePath = path.join(runDir, "page_0001.tiff");
+      await fs.writeFile(pagePath, "CAPTURED_PAGE");
+      await fs.writeFile(path.join(runDir, "ica_scratch.tiff"), "UNFINISHED_PAGE");
+      await onEvent({ type: "page_scanned", index: 1, path: pagePath });
+      signal.throwIfAborted();
+      return { ran: true };
+    });
+    const pending = startScanJob({ device_id: "test" }, ctx);
+    try {
+      const manifestPath = await gate.entered;
+      expect(await cancelJob(path.basename(path.dirname(manifestPath)), ctx)).toEqual({ ok: true });
+    } finally { gate.release(); await pending; }
+    const job = await pending;
+    expect(await getJobStatus(job.job_id, ctx)).toMatchObject({ state: "cancelled", pages: 1, documents: 0 });
+    expect(await events(job.run_dir)).toEqual(["job_started", "page_scanned", "job_cancelled"]);
   });
 
   it("keeps cancellation terminal during final device persistence", async () => {

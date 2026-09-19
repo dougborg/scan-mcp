@@ -76,7 +76,10 @@ async function processPages(runDir: string, manifest: Manifest, ctx: AppContext,
   for (let idx = 0; idx < pageFiles.length; idx++) {
     const f = pageFiles[idx];
     const p = path.join(runDir, f);
-    manifest.pages.push({ index: idx + 1, path: p, sha256: await hashFile(p) });
+    // ICA reports completed pages during capture; SANE discovers them here.
+    if (!manifest.pages.some(page => page.path === p)) {
+      manifest.pages.push({ index: idx + 1, path: p, sha256: await hashFile(p) });
+    }
   }
 
   if (manifest.pages.length === 0) throw new Error("Scanner produced no pages");
@@ -168,7 +171,15 @@ export async function startScanJob(input: StartScanInput, ctx: AppContext): Prom
       controller.signal.throwIfAborted();
       const result = await ctx.backend.runScan({
         input: manifest.params, runDir, ctx, signal: controller.signal,
-        onEvent: async (event) => appendEvent(eventsPath, { ts: new Date().toISOString(), ...event }),
+        onEvent: async (event) => {
+          if (event.type === "page_scanned") {
+            // Persist confirmed pages before cancellation or a later scanner error
+            // can bypass processing. Never inventory an unfinished scratch file.
+            manifest.pages.push({ index: event.index, path: event.path, sha256: await hashFile(event.path) });
+            await updateManifest(runDir, manifest);
+          }
+          await appendEvent(eventsPath, { ts: new Date().toISOString(), ...event });
+        },
       });
       controller.signal.throwIfAborted();
       if (!result.ran) throw new Error("Scanner failed to capture pages");
