@@ -16,8 +16,12 @@ struct AssembleTIFF: ParsableCommand {
 enum TIFFAssembly {
     static func assemble(pages: [URL], output: URL) throws {
         guard !pages.isEmpty else { throw ValidationError("at least one page is required") }
-        let temporary = output.deletingLastPathComponent().appendingPathComponent(".\(UUID().uuidString).tiff")
-        defer { try? FileManager.default.removeItem(at: temporary) }
+        // ImageIO can create its own sibling scratch files before finalization.
+        // Keep all staging files in one directory so failure cleanup removes them too.
+        let staging = output.deletingLastPathComponent().appendingPathComponent(".scan-mcp-tiff-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: staging) }
+        let temporary = staging.appendingPathComponent("document.tiff")
         guard let destination = CGImageDestinationCreateWithURL(temporary as CFURL, UTType.tiff.identifier as CFString, pages.count, nil) else {
             throw ValidationError("could not create TIFF output")
         }
