@@ -12,7 +12,7 @@ cd package
 npm install --omit=dev --ignore-scripts --no-audit --no-fund --cache "$ROOT/.npm-cache-pack"
 test -s dist/notices/LICENSE-scanline
 test -s dist/notices/LICENSE-argument-parser
-lipo -verify_arch arm64 x86_64 dist/bin/mcp-scanner-helper
+lipo dist/bin/mcp-scanner-helper -verify_arch arm64 x86_64
 codesign --verify --strict dist/bin/mcp-scanner-helper
 dist/bin/mcp-scanner-helper --help
 env -u MCP_SCANNER_HELPER_BIN SCAN_MOCK=false SCAN_BACKEND=ica node bin/scan-mcp --preflight-only

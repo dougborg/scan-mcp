@@ -50,5 +50,5 @@ else
   codesign "${SIGN_ARGS[@]}" --sign - dist/bin/mcp-scanner-helper
 fi
 codesign --verify --strict dist/bin/mcp-scanner-helper
-lipo -verify_arch arm64 x86_64 dist/bin/mcp-scanner-helper
+lipo dist/bin/mcp-scanner-helper -verify_arch arm64 x86_64
 bash scripts/package-helper-notices.sh
